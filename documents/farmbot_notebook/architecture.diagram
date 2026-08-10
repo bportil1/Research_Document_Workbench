@@ -1,0 +1,31 @@
+@direction TB
+
+@preset minimal
+
+Modified FarmBot Web Interface [interface]
+  -> Local FarmBot Web App [service]
+
+Local FarmBot Web App [service]
+  -> Rails API [service]
+  -> Database [database]
+
+Rails API [service]
+  -> Message Broker [service]
+
+Database [database]
+
+Message Broker [service]
+  -> FarmBot OS / Raspberry Pi 4 [hardware]
+
+FarmBot OS / Raspberry Pi 4 [hardware]
+  -> Custom Experiments [custom]
+  -> Farmduino [hardware]
+
+Custom Experiments [custom]
+  -> Physical FarmBot [hardware]
+
+Farmduino [hardware]
+  -> Physical FarmBot [hardware]
+
+Physical FarmBot [hardware]
+  :: Motors / Camera
