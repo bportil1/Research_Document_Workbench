@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-document-workbench"
+version = "0.3.0"
+description = "Standalone technical document workbench with a reusable document/diagram engine"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+web = ["Flask>=3.0,<4"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["tech_documents*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
