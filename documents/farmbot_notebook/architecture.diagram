@@ -2,30 +2,25 @@
 
 @preset minimal
 
-Modified FarmBot Web Interface [interface]
-  -> Local FarmBot Web App [service]
+Automated Imaging UI [interface]
+  -> FarmBot Command / RPC [service]
 
-Local FarmBot Web App [service]
-  -> Rails API [service]
-  -> Database [database]
+FarmBot Command / RPC [service]
+  -> FarmBot OS Lua Integration [service]
 
-Rails API [service]
-  -> Message Broker [service]
+FarmBot OS Lua Integration [service]
+  -> FarmbotOS.PhotoCollection [custom]
 
-Database [database]
+FarmbotOS.PhotoCollection [custom]
+  -> Plant Source [service]
+  -> Hardware Operations [hardware]
 
-Message Broker [service]
-  -> FarmBot OS / Raspberry Pi 4 [hardware]
+Plant Source [service]
 
-FarmBot OS / Raspberry Pi 4 [hardware]
-  -> Custom Experiments [custom]
-  -> Farmduino [hardware]
+Hardware Operations [hardware]
+  -> Motion [hardware]
+  -> Camera [hardware]
 
-Custom Experiments [custom]
-  -> Physical FarmBot [hardware]
+Motion [hardware]
 
-Farmduino [hardware]
-  -> Physical FarmBot [hardware]
-
-Physical FarmBot [hardware]
-  :: Motors / Camera
+Camera [hardware]

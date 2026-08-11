@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 builds/*
 !builds/.gitkeep
+documents/*
+figures/*
