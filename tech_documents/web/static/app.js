@@ -14,6 +14,24 @@ const wordCount = document.getElementById("wordCount");
 const outline = document.getElementById("outline");
 const editorGrid = document.getElementById("editorGrid");
 const searchInput = document.getElementById("searchInput");
+const textToolbar = document.getElementById("textToolbar");
+const notebookWorkspace = document.getElementById("notebookWorkspace");
+const notebookCells = document.getElementById("notebookCells");
+const notebookFilename = document.getElementById("notebookFilename");
+const notebookKernelStatus = document.getElementById("notebookKernelStatus");
+const notebookDependencyNotice = document.getElementById("notebookDependencyNotice");
+const notebookPresentation = document.getElementById("notebookPresentation");
+const notebookReveal = document.getElementById("notebookReveal");
+const notebookRevealSlides = document.getElementById("notebookRevealSlides");
+const notebookPresentationTitle = document.getElementById("notebookPresentationTitle");
+const notebookPresentationStatus = document.getElementById("notebookPresentationStatus");
+const notebookExportDialog = document.getElementById("notebookExportDialog");
+const notebookExportPreflight = document.getElementById("notebookExportPreflight");
+const notebookExportFormat = document.getElementById("notebookExportFormat");
+const notebookExportName = document.getElementById("notebookExportName");
+const notebookExportDescription = document.getElementById("notebookExportDescription");
+const notebookExportResult = document.getElementById("notebookExportResult");
+const notebookExportRunBtn = document.getElementById("notebookExportRunBtn");
 const diagramBuilderBtn = document.getElementById("diagramBuilderBtn");
 const diagramBuilderModal = document.getElementById("diagramBuilderModal");
 const diagramBuilderSource = document.getElementById("diagramBuilderSource");
@@ -54,6 +72,14 @@ let diagramPreviewGeneration = 0;
 let diagramBuilderTimer = null;
 let diagramBuilderGeneration = 0;
 let diagramBuilderNormalizedSource = "";
+
+let notebookDocument = null;
+let notebookSelectedIndex = -1;
+let notebookRunning = false;
+const notebookEditors = new Map();
+const notebookMarkdownEditing = new Set();
+let notebookRevealDeck = null;
+let notebookExportCapabilities = null;
 
 marked.setOptions({
   gfm: true,
@@ -116,6 +142,14 @@ function encodeRelativePath(path) {
 
 function fileApiUrl(path) {
   return `/api/files/${encodeURIComponent(currentProject)}/${encodeRelativePath(path)}`;
+}
+
+function notebookApiUrl(path = currentFile) {
+  return `/api/notebooks/${encodeURIComponent(currentProject)}/${encodeRelativePath(path)}`;
+}
+
+function isNotebookPath(path) {
+  return String(path || "").toLowerCase().endsWith(".ipynb");
 }
 
 function itemApiUrl(path) {
@@ -414,6 +448,9 @@ async function loadProjects(preferredProject, preferredFile) {
     await openFile(targetFile);
   } else {
     currentFile = "";
+    disposeNotebookEditors();
+    notebookDocument = null;
+    showTextWorkspace();
     editor.value = "";
     currentFilename.textContent = "No file selected";
     selectedItem = null;
@@ -500,7 +537,7 @@ function renderFiles() {
 
         if (!node.editable) {
           renderFiles();
-          setStatus(`${node.path} is not an editable text file.`);
+          setStatus(`${node.path} is not an editable Workbench document.`);
           return;
         }
 
@@ -612,6 +649,14 @@ function renderFiles() {
 
 async function openFile(filename) {
   closeDiagramBuilder();
+  if (isNotebookPath(filename)) {
+    await openNotebook(filename);
+    return;
+  }
+
+  disposeNotebookEditors();
+  notebookDocument = null;
+  showTextWorkspace();
   const data = await api(fileApiUrl(filename));
   currentFile = data.filename;
   selectedItem = {
@@ -634,6 +679,10 @@ async function openFile(filename) {
 
 async function saveCurrentFile() {
   if (!currentProject || !currentFile) return;
+  if (isNotebookPath(currentFile)) {
+    await saveCurrentNotebook();
+    return;
+  }
   await api(fileApiUrl(currentFile), {
     method: "PUT",
     body: JSON.stringify({ content: editor.value }),
@@ -1462,7 +1511,7 @@ async function createProject(defaultName = "") {
 async function createFile(targetFolder = selectedFolder()) {
   if (!currentProject) return;
   const location = targetFolder || "project root";
-  const filename = prompt(`New file in ${location}\nFilename (.md, .tex, .bib, .txt, or .diagram):`);
+  const filename = prompt(`New file in ${location}\nFilename (.md, .tex, .bib, .txt, .diagram, or .ipynb):`);
   if (!filename) return;
   if (filename.includes("/") || filename.includes("\\")) {
     setStatus("Enter a filename only; select the destination folder in the sidebar.");
@@ -1619,6 +1668,9 @@ async function deleteItem(item) {
   deleteHistoriesForPath(currentProject, item.path, isDirectory);
   if (affectsOpenFile) {
     currentFile = "";
+    disposeNotebookEditors();
+    notebookDocument = null;
+    showTextWorkspace();
     editor.value = "";
     currentFilename.textContent = "No file selected";
     dirty = false;
@@ -1672,6 +1724,1111 @@ async function handleContextAction(action) {
     await deleteItem(item);
   }
 }
+
+
+function showTextWorkspace() {
+  notebookWorkspace.hidden = true;
+  editorGrid.hidden = false;
+  textToolbar.hidden = false;
+  document.getElementById("compileBtn").disabled = false;
+  document.getElementById("printBtn").disabled = false;
+}
+
+function showNotebookWorkspace() {
+  editorGrid.hidden = true;
+  textToolbar.hidden = true;
+  notebookWorkspace.hidden = false;
+  document.getElementById("compileBtn").disabled = true;
+  document.getElementById("printBtn").disabled = true;
+  outline.innerHTML = "";
+  markdownPreview.style.display = "none";
+  pdfPreview.style.display = "none";
+  compilerLog.style.display = "none";
+}
+
+function disposeNotebookEditor(cellId) {
+  const existing = notebookEditors.get(cellId);
+  if (!existing) return;
+  try {
+    existing.destroy();
+  } catch (_) {
+    // The cell DOM may already have been removed.
+  }
+  notebookEditors.delete(cellId);
+}
+
+function disposeNotebookEditors() {
+  Array.from(notebookEditors.keys()).forEach(disposeNotebookEditor);
+}
+
+function newNotebookCellId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  }
+  return `cell${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function newNotebookCell(kind = "code", source = "") {
+  if (kind === "markdown") {
+    return {
+      cell_type: "markdown",
+      id: newNotebookCellId(),
+      metadata: {},
+      source,
+    };
+  }
+  return {
+    cell_type: "code",
+    id: newNotebookCellId(),
+    metadata: {},
+    source,
+    execution_count: null,
+    outputs: [],
+  };
+}
+
+function normalizeNotebookDocument(notebook) {
+  const normalized = notebook && typeof notebook === "object" ? notebook : {};
+  if (!Array.isArray(normalized.cells)) normalized.cells = [];
+  if (!normalized.metadata || typeof normalized.metadata !== "object") normalized.metadata = {};
+  if (!Number.isInteger(normalized.nbformat)) normalized.nbformat = 4;
+  if (!Number.isInteger(normalized.nbformat_minor)) normalized.nbformat_minor = 5;
+  normalized.cells.forEach(cell => {
+    if (!cell.id) cell.id = newNotebookCellId();
+    if (!cell.metadata || typeof cell.metadata !== "object") cell.metadata = {};
+    if (Array.isArray(cell.source)) cell.source = cell.source.join("");
+    if (typeof cell.source !== "string") cell.source = String(cell.source || "");
+    if (cell.cell_type === "code") {
+      if (!Array.isArray(cell.outputs)) cell.outputs = [];
+      if (!("execution_count" in cell)) cell.execution_count = null;
+    }
+  });
+  return normalized;
+}
+
+async function openNotebook(filename) {
+  disposeNotebookEditors();
+  notebookMarkdownEditing.clear();
+  showNotebookWorkspace();
+  const data = await api(notebookApiUrl(filename));
+  currentFile = data.filename;
+  selectedItem = {
+    type: "file",
+    name: basename(currentFile),
+    path: currentFile,
+    editable: true,
+  };
+  ensureCurrentParentsExpanded(currentFile);
+  notebookDocument = normalizeNotebookDocument(data.notebook);
+  notebookSelectedIndex = notebookDocument.cells.length ? 0 : -1;
+  dirty = false;
+  notebookFilename.textContent = currentFile;
+  currentFilename.textContent = currentFile;
+  renderNotebook();
+  updateNotebookKernelStatus(data.kernel);
+  renderNotebookOutline();
+  updateDiagramBuilderAvailability();
+  renderFiles();
+  setStatus(`Opened notebook ${currentFile}`);
+}
+
+async function saveCurrentNotebook() {
+  if (!currentProject || !currentFile || !notebookDocument) return;
+  await api(notebookApiUrl(), {
+    method: "PUT",
+    body: JSON.stringify({ notebook: notebookDocument }),
+  });
+  dirty = false;
+  setStatus(`Saved ${currentFile} at ${new Date().toLocaleTimeString()}`);
+}
+
+function markNotebookDirty(message = "Unsaved notebook changes") {
+  dirty = true;
+  setStatus(message);
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    saveCurrentNotebook().catch(error => setStatus(`Save failed: ${error.message}`));
+  }, 800);
+}
+
+function updateNotebookKernelStatus(kernel) {
+  if (!kernel) return;
+  notebookKernelStatus.classList.remove("running", "busy");
+  if (!kernel.available) {
+    notebookKernelStatus.textContent = "Python kernel unavailable";
+    notebookDependencyNotice.hidden = false;
+    notebookDependencyNotice.textContent =
+      "Notebook execution requires nbformat, jupyter_client, and ipykernel. " +
+      "Install the Workbench notebook dependencies to run cells; editing and saving remain available.";
+    return;
+  }
+  notebookDependencyNotice.hidden = true;
+  if (kernel.running) {
+    notebookKernelStatus.textContent = "Python 3 · idle";
+    notebookKernelStatus.classList.add("running");
+  } else {
+    notebookKernelStatus.textContent = "Python 3 · starts on first run";
+  }
+}
+
+function setNotebookKernelBusy(message = "Python 3 · busy") {
+  notebookKernelStatus.textContent = message;
+  notebookKernelStatus.classList.remove("running");
+  notebookKernelStatus.classList.add("busy");
+}
+
+function notebookCellElement(cellId) {
+  return Array.from(notebookCells.children).find(
+    element => element.dataset?.cellId === cellId
+  ) || null;
+}
+
+function makeNotebookButton(label, title, handler) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  button.title = title;
+  button.addEventListener("click", event => {
+    event.stopPropagation();
+    Promise.resolve(handler()).catch(error => setStatus(error.message));
+  });
+  return button;
+}
+
+function notebookText(value) {
+  if (Array.isArray(value)) return value.join("");
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function rewriteNotebookProjectAssets(container) {
+  if (!currentProject || !currentFile) return;
+  const baseDirectory = dirname(currentFile);
+  container.querySelectorAll("img[src]").forEach(image => {
+    const source = image.getAttribute("src") || "";
+    if (/^(?:https?:|data:|blob:|\/\/|#)/i.test(source)) return;
+    const resolved = resolveProjectRelativePath(baseDirectory, source);
+    if (!resolved) return;
+    image.src = `/api/project-asset/${encodeURIComponent(currentProject)}/${encodeRelativePath(resolved)}`;
+  });
+}
+
+function renderNotebookMarkdown(cell, index, body) {
+  const editing = notebookMarkdownEditing.has(cell.id) || !cell.source.trim();
+  if (editing) {
+    const input = document.createElement("textarea");
+    input.className = "notebook-markdown-editor";
+    input.spellcheck = true;
+    input.value = cell.source;
+    input.placeholder = "Write Markdown…";
+    input.addEventListener("input", () => {
+      cell.source = input.value;
+      markNotebookDirty();
+      renderNotebookOutline();
+    });
+    input.addEventListener("keydown", event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        notebookMarkdownEditing.delete(cell.id);
+        rerenderNotebookCell(index);
+      } else if (event.shiftKey && event.key === "Enter") {
+        event.preventDefault();
+        notebookMarkdownEditing.delete(cell.id);
+        rerenderNotebookCell(index);
+        if (index + 1 < notebookDocument.cells.length) focusNotebookCell(index + 1);
+        else insertNotebookCell("code", notebookDocument.cells.length);
+      }
+    });
+    body.appendChild(input);
+    queueMicrotask(() => input.focus());
+    return;
+  }
+
+  const rendered = document.createElement("article");
+  rendered.className = "notebook-markdown-rendered";
+  const html = marked.parse(cell.source || "");
+  rendered.innerHTML = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+  rendered.querySelectorAll('img[src^="attachment:"]').forEach(image => {
+    const name = decodeURIComponent((image.getAttribute("src") || "").slice("attachment:".length));
+    const attachment = cell.attachments?.[name];
+    if (!attachment) return;
+    if (attachment["image/png"]) image.src = `data:image/png;base64,${notebookText(attachment["image/png"])}`;
+    else if (attachment["image/jpeg"]) image.src = `data:image/jpeg;base64,${notebookText(attachment["image/jpeg"])}`;
+    else if (attachment["image/svg+xml"]) {
+      const svg = notebookText(attachment["image/svg+xml"]);
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    }
+  });
+  rewriteNotebookProjectAssets(rendered);
+  rendered.querySelectorAll("pre code").forEach(code => hljs.highlightElement(code));
+  if (typeof renderMathInElement === "function") {
+    renderMathInElement(rendered, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "$", right: "$", display: false },
+      ],
+      throwOnError: false,
+    });
+  }
+  rendered.addEventListener("dblclick", () => {
+    notebookMarkdownEditing.add(cell.id);
+    rerenderNotebookCell(index);
+  });
+  body.appendChild(rendered);
+}
+
+function resizeAceNotebookEditor(aceEditor, host) {
+  const lines = Math.max(3, Math.min(22, aceEditor.session.getScreenLength() + 1));
+  host.style.height = `${lines * 20 + 18}px`;
+  aceEditor.resize();
+}
+
+function renderNotebookCode(cell, index, body) {
+  const host = document.createElement("div");
+  host.className = "notebook-code-editor";
+  body.appendChild(host);
+
+  if (window.ace) {
+    const aceEditor = window.ace.edit(host);
+    notebookEditors.set(cell.id, aceEditor);
+    aceEditor.setTheme("ace/theme/tomorrow_night");
+    aceEditor.session.setMode("ace/mode/python");
+    aceEditor.session.setValue(cell.source || "");
+    aceEditor.session.setUseSoftTabs(true);
+    aceEditor.session.setTabSize(4);
+    aceEditor.session.setUseWrapMode(false);
+    aceEditor.setOptions({
+      fontSize: "14px",
+      showPrintMargin: false,
+      highlightActiveLine: true,
+      enableBasicAutocompletion: false,
+      enableLiveAutocompletion: false,
+    });
+    aceEditor.commands.addCommand({
+      name: "runCellAndAdvance",
+      bindKey: { win: "Shift-Enter", mac: "Shift-Enter" },
+      exec: () => runNotebookCell(index, true),
+    });
+    aceEditor.commands.addCommand({
+      name: "runCell",
+      bindKey: { win: "Ctrl-Enter", mac: "Command-Enter" },
+      exec: () => runNotebookCell(index, false),
+    });
+    aceEditor.commands.addCommand({
+      name: "saveNotebook",
+      bindKey: { win: "Ctrl-S", mac: "Command-S" },
+      exec: () => saveCurrentNotebook().catch(error => setStatus(error.message)),
+    });
+    aceEditor.session.on("change", () => {
+      cell.source = aceEditor.session.getValue();
+      resizeAceNotebookEditor(aceEditor, host);
+      markNotebookDirty();
+    });
+    resizeAceNotebookEditor(aceEditor, host);
+  } else {
+    host.remove();
+    const fallback = document.createElement("textarea");
+    fallback.className = "notebook-code-fallback";
+    fallback.spellcheck = false;
+    fallback.value = cell.source || "";
+    fallback.placeholder = "Python code…";
+    fallback.addEventListener("input", () => {
+      cell.source = fallback.value;
+      markNotebookDirty();
+    });
+    fallback.addEventListener("keydown", event => {
+      if (event.key === "Tab") {
+        event.preventDefault();
+        fallback.setRangeText("    ", fallback.selectionStart, fallback.selectionEnd, "end");
+        cell.source = fallback.value;
+        markNotebookDirty();
+      } else if (event.shiftKey && event.key === "Enter") {
+        event.preventDefault();
+        runNotebookCell(index, true);
+      } else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        runNotebookCell(index, false);
+      }
+    });
+    body.appendChild(fallback);
+  }
+}
+
+function renderNotebookRaw(cell, body) {
+  const input = document.createElement("textarea");
+  input.className = "notebook-code-fallback";
+  input.spellcheck = false;
+  input.value = cell.source || "";
+  input.placeholder = "Raw notebook cell…";
+  input.addEventListener("input", () => {
+    cell.source = input.value;
+    markNotebookDirty();
+  });
+  body.appendChild(input);
+}
+
+function stripAnsi(text) {
+  return notebookText(text).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function appendNotebookMimeOutput(container, data) {
+  const item = document.createElement("div");
+  item.className = "notebook-output-item";
+
+  if (data && data["image/svg+xml"]) {
+    item.innerHTML = DOMPurify.sanitize(notebookText(data["image/svg+xml"]), {
+      USE_PROFILES: { svg: true, svgFilters: true },
+    });
+  } else if (data && data["image/png"]) {
+    const image = document.createElement("img");
+    image.alt = "Notebook output";
+    image.src = `data:image/png;base64,${notebookText(data["image/png"])}`;
+    item.appendChild(image);
+  } else if (data && data["image/jpeg"]) {
+    const image = document.createElement("img");
+    image.alt = "Notebook output";
+    image.src = `data:image/jpeg;base64,${notebookText(data["image/jpeg"])}`;
+    item.appendChild(image);
+  } else if (data && data["text/html"]) {
+    const html = document.createElement("div");
+    html.className = "notebook-output-html";
+    html.innerHTML = DOMPurify.sanitize(notebookText(data["text/html"]), {
+      USE_PROFILES: { html: true },
+    });
+    rewriteNotebookProjectAssets(html);
+    item.appendChild(html);
+  } else if (data && data["application/json"] !== undefined) {
+    const pre = document.createElement("pre");
+    const value = data["application/json"];
+    pre.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    item.appendChild(pre);
+  } else {
+    const pre = document.createElement("pre");
+    pre.textContent = notebookText(data?.["text/plain"] ?? "");
+    item.appendChild(pre);
+  }
+  container.appendChild(item);
+}
+
+function renderCellOutputs(cell, container) {
+  container.innerHTML = "";
+  if (cell.cell_type !== "code") return;
+  (cell.outputs || []).forEach(output => {
+    if (output.output_type === "stream") {
+      const item = document.createElement("div");
+      item.className = "notebook-output-item";
+      const pre = document.createElement("pre");
+      if (output.name === "stderr") pre.className = "stderr";
+      pre.textContent = notebookText(output.text);
+      item.appendChild(pre);
+      container.appendChild(item);
+    } else if (output.output_type === "error") {
+      const item = document.createElement("div");
+      item.className = "notebook-output-item";
+      const pre = document.createElement("pre");
+      pre.className = "error";
+      const traceback = Array.isArray(output.traceback)
+        ? output.traceback.map(stripAnsi).join("\n")
+        : `${output.ename || "Error"}: ${output.evalue || ""}`;
+      pre.textContent = traceback;
+      item.appendChild(pre);
+      container.appendChild(item);
+    } else if (output.output_type === "display_data" || output.output_type === "execute_result") {
+      appendNotebookMimeOutput(container, output.data || {});
+    }
+  });
+}
+
+
+const NOTEBOOK_SLIDE_ROLES = [
+  ["", "Normal"],
+  ["slide", "New slide"],
+  ["subslide", "Sub-slide"],
+  ["fragment", "Fragment"],
+  ["skip", "Skip"],
+  ["notes", "Speaker notes"],
+];
+
+function notebookSlideRole(cell) {
+  return notebookText(cell?.metadata?.slideshow?.slide_type || "");
+}
+
+function setNotebookSlideRole(index, role) {
+  const cell = notebookDocument?.cells[index];
+  if (!cell) return;
+  if (!cell.metadata || typeof cell.metadata !== "object") cell.metadata = {};
+  if (!role) {
+    if (cell.metadata.slideshow && typeof cell.metadata.slideshow === "object") {
+      delete cell.metadata.slideshow.slide_type;
+      if (!Object.keys(cell.metadata.slideshow).length) delete cell.metadata.slideshow;
+    }
+  } else {
+    if (!cell.metadata.slideshow || typeof cell.metadata.slideshow !== "object") {
+      cell.metadata.slideshow = {};
+    }
+    cell.metadata.slideshow.slide_type = role;
+  }
+  markNotebookDirty("Updated presentation role");
+  rerenderNotebookCell(index);
+}
+
+function notebookSlideRoleSelect(cell, index) {
+  const select = document.createElement("select");
+  select.className = "notebook-slide-role";
+  select.title = "Presentation role";
+  const active = notebookSlideRole(cell);
+  NOTEBOOK_SLIDE_ROLES.forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.selected = active === value;
+    select.appendChild(option);
+  });
+  select.addEventListener("change", event => {
+    event.stopPropagation();
+    setNotebookSlideRole(index, select.value);
+  });
+  return select;
+}
+
+function renderPresentationMarkdown(cell, container) {
+  const rendered = document.createElement("div");
+  rendered.className = "notebook-presentation-markdown";
+  rendered.innerHTML = DOMPurify.sanitize(marked.parse(cell.source || ""), {
+    USE_PROFILES: { html: true },
+  });
+  rendered.querySelectorAll('img[src^="attachment:"]').forEach(image => {
+    const name = decodeURIComponent((image.getAttribute("src") || "").slice("attachment:".length));
+    const attachment = cell.attachments?.[name];
+    if (!attachment) return;
+    if (attachment["image/png"]) image.src = `data:image/png;base64,${notebookText(attachment["image/png"])}`;
+    else if (attachment["image/jpeg"]) image.src = `data:image/jpeg;base64,${notebookText(attachment["image/jpeg"])}`;
+    else if (attachment["image/svg+xml"]) {
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(notebookText(attachment["image/svg+xml"]))}`;
+    }
+  });
+  rewriteNotebookProjectAssets(rendered);
+  rendered.querySelectorAll("pre code").forEach(code => hljs.highlightElement(code));
+  if (typeof renderMathInElement === "function") {
+    renderMathInElement(rendered, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "$", right: "$", display: false },
+      ],
+      throwOnError: false,
+    });
+  }
+  container.appendChild(rendered);
+}
+
+function renderPresentationCode(cell, index, container) {
+  const shell = document.createElement("div");
+  shell.className = "notebook-presentation-code";
+  const header = document.createElement("div");
+  header.className = "notebook-presentation-code-header";
+  const label = document.createElement("span");
+  label.textContent = `Python · In [${cell.execution_count ?? " "}]`;
+  const run = document.createElement("button");
+  run.type = "button";
+  run.textContent = "Run live";
+  run.title = "Execute this cell using the notebook's current Python kernel";
+  run.addEventListener("click", event => {
+    event.stopPropagation();
+    runNotebookCell(index, false).catch(error => setStatus(`Run failed: ${error.message}`));
+  });
+  header.append(label, run);
+  shell.appendChild(header);
+  const pre = document.createElement("pre");
+  const code = document.createElement("code");
+  code.className = "language-python";
+  code.textContent = cell.source || "";
+  pre.appendChild(code);
+  shell.appendChild(pre);
+  hljs.highlightElement(code);
+  const output = document.createElement("div");
+  output.className = "notebook-output notebook-presentation-output";
+  renderCellOutputs(cell, output);
+  shell.appendChild(output);
+  container.appendChild(shell);
+}
+
+function ensurePresentationGroup(groups) {
+  if (!groups.length) groups.push([[]]);
+  const horizontal = groups[groups.length - 1];
+  if (!horizontal.length) horizontal.push([]);
+  return horizontal[horizontal.length - 1];
+}
+
+function presentationGroups() {
+  const groups = [];
+  let currentVertical = null;
+  (notebookDocument?.cells || []).forEach((cell, index) => {
+    const role = notebookSlideRole(cell);
+    if (role === "skip") return;
+    if (role === "slide" || !currentVertical) {
+      groups.push([[]]);
+      currentVertical = groups[groups.length - 1][0];
+    } else if (role === "subslide") {
+      groups[groups.length - 1].push([]);
+      currentVertical = groups[groups.length - 1][groups[groups.length - 1].length - 1];
+    }
+    currentVertical = currentVertical || ensurePresentationGroup(groups);
+    currentVertical.push({ cell, index, role });
+  });
+  return groups;
+}
+
+function renderPresentationCell(entry, container) {
+  const { cell, index, role } = entry;
+  if (role === "notes") {
+    const notes = document.createElement("aside");
+    notes.className = "notes";
+    notes.dataset.presentationCellId = cell.id;
+    if (cell.cell_type === "markdown") renderPresentationMarkdown(cell, notes);
+    else notes.textContent = cell.source || "";
+    container.appendChild(notes);
+    return;
+  }
+  const wrapper = document.createElement("div");
+  wrapper.className = "notebook-presentation-cell";
+  wrapper.dataset.presentationCellId = cell.id;
+  if (role === "fragment") wrapper.classList.add("fragment");
+  if (cell.cell_type === "markdown") renderPresentationMarkdown(cell, wrapper);
+  else if (cell.cell_type === "code") renderPresentationCode(cell, index, wrapper);
+  else {
+    const pre = document.createElement("pre");
+    pre.textContent = cell.source || "";
+    wrapper.appendChild(pre);
+  }
+  container.appendChild(wrapper);
+}
+
+function buildNotebookPresentationSlides() {
+  notebookRevealSlides.innerHTML = "";
+  const groups = presentationGroups();
+  if (!groups.length) {
+    const section = document.createElement("section");
+    section.innerHTML = "<h2>Empty presentation</h2><p>Add notebook cells or change cells from Skip.</p>";
+    notebookRevealSlides.appendChild(section);
+    return;
+  }
+  groups.forEach(verticalSlides => {
+    const horizontal = document.createElement("section");
+    verticalSlides.forEach(entries => {
+      const slide = document.createElement("section");
+      entries.forEach(entry => renderPresentationCell(entry, slide));
+      horizontal.appendChild(slide);
+    });
+    notebookRevealSlides.appendChild(horizontal);
+  });
+}
+
+async function openNotebookPresentation() {
+  if (!notebookDocument || !currentFile) return;
+  if (!window.Reveal) {
+    setStatus("Reveal.js is not installed. Run python3 scripts/vendor_reveal.py once.");
+    return;
+  }
+  if (dirty) await saveCurrentNotebook();
+  buildNotebookPresentationSlides();
+  notebookPresentationTitle.textContent = basename(currentFile);
+  notebookPresentationStatus.textContent = "Live notebook · same Python kernel · exports never execute cells";
+  notebookPresentation.hidden = false;
+  notebookRevealDeck = new window.Reveal(notebookReveal, {
+    embedded: true,
+    hash: false,
+    controls: true,
+    progress: true,
+    center: false,
+    transition: "slide",
+    margin: 0.08,
+  });
+  await notebookRevealDeck.initialize();
+  notebookRevealDeck.focus();
+  setStatus(`Presenting ${currentFile}`);
+}
+
+async function closeNotebookPresentation() {
+  if (notebookRevealDeck) {
+    try { notebookRevealDeck.destroy(); } catch (_) { /* presentation is already leaving */ }
+  }
+  notebookRevealDeck = null;
+  notebookPresentation.hidden = true;
+  setStatus(currentFile ? `Returned to ${currentFile}` : "Ready");
+}
+
+function refreshNotebookPresentationCell(index) {
+  if (notebookPresentation.hidden || !notebookDocument?.cells[index]) return;
+  const cell = notebookDocument.cells[index];
+  const wrapper = notebookRevealSlides.querySelector(`[data-presentation-cell-id="${CSS.escape(cell.id)}"]`);
+  if (!wrapper || cell.cell_type !== "code") return;
+  const label = wrapper.querySelector(".notebook-presentation-code-header span");
+  if (label) label.textContent = `Python · In [${cell.execution_count ?? " "}]`;
+  const output = wrapper.querySelector(".notebook-presentation-output");
+  if (output) renderCellOutputs(cell, output);
+  notebookRevealDeck?.sync();
+}
+
+function renderNotebookExportPreflight(capabilities) {
+  notebookExportPreflight.innerHTML = "";
+  [
+    ["nbconvert", "Notebook exporter", "HTML / Markdown"],
+    ["reveal", "Reveal.js", "Live + offline HTML slides"],
+    ["quarto", "Quarto", "Word / PowerPoint + export orchestration"],
+    ["latex", "LaTeX", "PDF / Beamer"],
+  ].forEach(([key, label, detail]) => {
+    const row = document.createElement("div");
+    row.className = `notebook-export-capability ${capabilities[key] ? "available" : "missing"}`;
+    row.innerHTML = `<strong>${label}</strong><span>${capabilities[key] ? "Ready" : "Unavailable"}</span><small>${detail}</small>`;
+    notebookExportPreflight.appendChild(row);
+  });
+}
+
+function updateNotebookExportSelection() {
+  const selected = notebookExportCapabilities?.formats?.find(item => item.id === notebookExportFormat.value);
+  if (!selected) {
+    notebookExportDescription.textContent = "";
+    notebookExportRunBtn.disabled = true;
+    return;
+  }
+  notebookExportDescription.textContent = selected.available
+    ? selected.description
+    : selected.reason;
+  notebookExportRunBtn.disabled = !selected.available;
+}
+
+async function openNotebookExportDialog() {
+  if (!notebookDocument || !currentFile) return;
+  if (dirty) await saveCurrentNotebook();
+  notebookExportResult.textContent = "Checking export capabilities…";
+  notebookExportCapabilities = await api(`${notebookApiUrl()}/exports`);
+  renderNotebookExportPreflight(notebookExportCapabilities);
+  notebookExportFormat.innerHTML = "";
+  notebookExportCapabilities.formats.forEach(format => {
+    const option = document.createElement("option");
+    option.value = format.id;
+    option.disabled = !format.available;
+    option.textContent = `${format.kind === "presentation" ? "Presentation" : "Document"} · ${format.label}${format.available ? "" : " — unavailable"}`;
+    notebookExportFormat.appendChild(option);
+  });
+  const firstAvailable = notebookExportCapabilities.formats.find(item => item.available);
+  if (firstAvailable) notebookExportFormat.value = firstAvailable.id;
+  notebookExportName.value = basename(currentFile).replace(/\.ipynb$/i, "");
+  notebookExportResult.textContent = "Exports are written to builds/notebooks/ and use stored outputs only.";
+  updateNotebookExportSelection();
+  notebookExportDialog.showModal();
+}
+
+async function runNotebookExport() {
+  const selected = notebookExportCapabilities?.formats?.find(item => item.id === notebookExportFormat.value);
+  if (!selected?.available) return;
+  notebookExportRunBtn.disabled = true;
+  notebookExportResult.textContent = `Exporting ${selected.label}…`;
+  try {
+    const result = await api(`${notebookApiUrl()}/exports`, {
+      method: "POST",
+      body: JSON.stringify({
+        format: selected.id,
+        output_name: notebookExportName.value.trim(),
+      }),
+    });
+    notebookExportResult.innerHTML = "";
+    const message = document.createElement("span");
+    message.textContent = `Created ${result.path} `;
+    const link = document.createElement("a");
+    link.href = result.download_url;
+    link.textContent = "Download";
+    link.target = "_blank";
+    notebookExportResult.append(message, link);
+    await loadProjects(currentProject, currentFile);
+    setStatus(`Exported ${result.path}`);
+  } finally {
+    notebookExportRunBtn.disabled = false;
+  }
+}
+
+function renderNotebookCell(cell, index) {
+  if (!cell.id) cell.id = newNotebookCellId();
+  const article = document.createElement("article");
+  article.className = "notebook-cell";
+  article.dataset.cellId = cell.id;
+  article.dataset.index = String(index);
+  if (index === notebookSelectedIndex) article.classList.add("selected");
+  article.addEventListener("click", () => {
+    notebookSelectedIndex = index;
+    notebookCells.querySelectorAll(".notebook-cell").forEach((node, nodeIndex) => {
+      node.classList.toggle("selected", nodeIndex === index);
+    });
+  });
+
+  const gutter = document.createElement("div");
+  gutter.className = "notebook-cell-gutter";
+  gutter.textContent = cell.cell_type === "code"
+    ? `In [${cell.execution_count ?? " "}]:`
+    : cell.cell_type === "markdown" ? "Markdown" : "Raw";
+  article.appendChild(gutter);
+
+  const main = document.createElement("div");
+  main.className = "notebook-cell-main";
+  article.appendChild(main);
+
+  const header = document.createElement("div");
+  header.className = "notebook-cell-header";
+  const kind = document.createElement("span");
+  kind.className = "notebook-cell-kind";
+  kind.textContent = cell.cell_type === "code"
+    ? "Python"
+    : cell.cell_type === "markdown" ? "Markdown" : "Raw";
+  header.appendChild(kind);
+
+  const actions = document.createElement("div");
+  actions.className = "notebook-cell-actions";
+  if (cell.cell_type === "code") {
+    actions.appendChild(makeNotebookButton("Run", "Run cell (Ctrl+Enter)", () => runNotebookCell(index, false)));
+    actions.appendChild(makeNotebookButton("Run ↓", "Run cell and advance (Shift+Enter)", () => runNotebookCell(index, true)));
+  } else if (cell.cell_type === "markdown") {
+    const label = notebookMarkdownEditing.has(cell.id) || !cell.source.trim() ? "Render" : "Edit";
+    actions.appendChild(makeNotebookButton(label, "Toggle Markdown editing/rendering", () => {
+      if (notebookMarkdownEditing.has(cell.id)) notebookMarkdownEditing.delete(cell.id);
+      else notebookMarkdownEditing.add(cell.id);
+      rerenderNotebookCell(index);
+    }));
+  }
+
+  actions.appendChild(makeNotebookButton("+↑", "Insert cell above", () => insertNotebookCell("code", index)));
+  actions.appendChild(makeNotebookButton("+↓", "Insert cell below", () => insertNotebookCell("code", index + 1)));
+  actions.appendChild(makeNotebookButton("↑", "Move cell up", () => moveNotebookCell(index, -1)));
+  actions.appendChild(makeNotebookButton("↓", "Move cell down", () => moveNotebookCell(index, 1)));
+  actions.appendChild(makeNotebookButton("Duplicate", "Duplicate cell", () => duplicateNotebookCell(index)));
+
+  const typeSelect = document.createElement("select");
+  typeSelect.title = "Cell type";
+  [["code", "Code"], ["markdown", "Markdown"], ["raw", "Raw"]].forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.selected = cell.cell_type === value;
+    typeSelect.appendChild(option);
+  });
+  typeSelect.addEventListener("change", event => {
+    event.stopPropagation();
+    changeNotebookCellType(index, typeSelect.value);
+  });
+  actions.appendChild(typeSelect);
+  actions.appendChild(notebookSlideRoleSelect(cell, index));
+  actions.appendChild(makeNotebookButton("Delete", "Delete cell", () => deleteNotebookCell(index)));
+  header.appendChild(actions);
+  main.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "notebook-cell-body";
+  if (cell.cell_type === "markdown") renderNotebookMarkdown(cell, index, body);
+  else if (cell.cell_type === "code") renderNotebookCode(cell, index, body);
+  else renderNotebookRaw(cell, body);
+  main.appendChild(body);
+
+  const output = document.createElement("div");
+  output.className = "notebook-output";
+  renderCellOutputs(cell, output);
+  main.appendChild(output);
+  return article;
+}
+
+function renderNotebook() {
+  disposeNotebookEditors();
+  notebookCells.innerHTML = "";
+  if (!notebookDocument) return;
+  notebookDocument.cells.forEach((cell, index) => {
+    notebookCells.appendChild(renderNotebookCell(cell, index));
+  });
+  if (!notebookDocument.cells.length) {
+    const empty = document.createElement("div");
+    empty.className = "notebook-dependency-notice";
+    empty.textContent = "This notebook has no cells. Add a Markdown or code cell to begin.";
+    notebookCells.appendChild(empty);
+  }
+}
+
+function rerenderNotebookCell(index) {
+  if (!notebookDocument?.cells[index]) return;
+  const cell = notebookDocument.cells[index];
+  const existing = notebookCellElement(cell.id);
+  disposeNotebookEditor(cell.id);
+  const replacement = renderNotebookCell(cell, index);
+  if (existing) existing.replaceWith(replacement);
+  else renderNotebook();
+  renderNotebookOutline();
+}
+
+function renderNotebookOutline() {
+  outline.innerHTML = "";
+  if (!notebookDocument) return;
+  notebookDocument.cells.forEach((cell, index) => {
+    if (cell.cell_type !== "markdown") return;
+    notebookText(cell.source).split("\n").forEach(line => {
+      const match = /^(#{1,4})\s+(.+?)\s*$/.exec(line);
+      if (!match) return;
+      const link = document.createElement("a");
+      link.href = "#";
+      link.className = `level-${Math.min(4, match[1].length)}`;
+      link.textContent = match[2];
+      link.addEventListener("click", event => {
+        event.preventDefault();
+        notebookSelectedIndex = index;
+        notebookCellElement(cell.id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      outline.appendChild(link);
+    });
+  });
+}
+
+function insertNotebookCell(kind, index) {
+  if (!notebookDocument) return;
+  const safeIndex = Math.max(0, Math.min(notebookDocument.cells.length, index));
+  const cell = newNotebookCell(kind);
+  notebookDocument.cells.splice(safeIndex, 0, cell);
+  notebookSelectedIndex = safeIndex;
+  if (kind === "markdown") notebookMarkdownEditing.add(cell.id);
+  markNotebookDirty();
+  renderNotebook();
+  renderNotebookOutline();
+  queueMicrotask(() => focusNotebookCell(safeIndex));
+}
+
+function deleteNotebookCell(index) {
+  if (!notebookDocument?.cells[index]) return;
+  const cell = notebookDocument.cells[index];
+  if (!confirm(`Delete this ${cell.cell_type} cell?`)) return;
+  disposeNotebookEditor(cell.id);
+  notebookMarkdownEditing.delete(cell.id);
+  notebookDocument.cells.splice(index, 1);
+  notebookSelectedIndex = Math.min(index, notebookDocument.cells.length - 1);
+  markNotebookDirty();
+  renderNotebook();
+  renderNotebookOutline();
+}
+
+function duplicateNotebookCell(index) {
+  if (!notebookDocument?.cells[index]) return;
+  const source = notebookDocument.cells[index];
+  const copy = JSON.parse(JSON.stringify(source));
+  copy.id = newNotebookCellId();
+  if (copy.cell_type === "code") {
+    copy.execution_count = null;
+    copy.outputs = [];
+  }
+  notebookDocument.cells.splice(index + 1, 0, copy);
+  notebookSelectedIndex = index + 1;
+  markNotebookDirty();
+  renderNotebook();
+  renderNotebookOutline();
+  queueMicrotask(() => focusNotebookCell(index + 1));
+}
+
+function moveNotebookCell(index, direction) {
+  if (!notebookDocument?.cells[index]) return;
+  const destination = index + direction;
+  if (destination < 0 || destination >= notebookDocument.cells.length) return;
+  const [cell] = notebookDocument.cells.splice(index, 1);
+  notebookDocument.cells.splice(destination, 0, cell);
+  notebookSelectedIndex = destination;
+  markNotebookDirty();
+  renderNotebook();
+  renderNotebookOutline();
+  queueMicrotask(() => focusNotebookCell(destination));
+}
+
+function changeNotebookCellType(index, cellType) {
+  const cell = notebookDocument?.cells[index];
+  if (!cell || cell.cell_type === cellType) return;
+  disposeNotebookEditor(cell.id);
+  cell.cell_type = cellType;
+  if (cellType === "code") {
+    cell.execution_count = null;
+    cell.outputs = [];
+    delete cell.attachments;
+  } else {
+    delete cell.execution_count;
+    delete cell.outputs;
+    if (cellType === "markdown") notebookMarkdownEditing.add(cell.id);
+    else {
+      delete cell.attachments;
+      notebookMarkdownEditing.delete(cell.id);
+    }
+  }
+  markNotebookDirty();
+  rerenderNotebookCell(index);
+}
+
+function focusNotebookCell(index) {
+  const cell = notebookDocument?.cells[index];
+  if (!cell) return;
+  notebookSelectedIndex = index;
+  const element = notebookCellElement(cell.id);
+  element?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const aceEditor = notebookEditors.get(cell.id);
+  if (aceEditor) {
+    aceEditor.focus();
+    return;
+  }
+  const input = element?.querySelector("textarea");
+  if (input) input.focus();
+  else if (cell.cell_type === "markdown") {
+    notebookMarkdownEditing.add(cell.id);
+    rerenderNotebookCell(index);
+  }
+}
+
+function refreshNotebookCellResult(index) {
+  const cell = notebookDocument?.cells[index];
+  if (!cell) return;
+  const element = notebookCellElement(cell.id);
+  if (!element) return;
+  const gutter = element.querySelector(".notebook-cell-gutter");
+  if (gutter && cell.cell_type === "code") {
+    gutter.textContent = `In [${cell.execution_count ?? " "}]:`;
+  }
+  const output = element.querySelector(".notebook-output");
+  if (output) renderCellOutputs(cell, output);
+}
+
+async function executeNotebookCell(index) {
+  const cell = notebookDocument?.cells[index];
+  if (!cell || cell.cell_type !== "code") return false;
+  const element = notebookCellElement(cell.id);
+  element?.classList.add("notebook-cell-running");
+  setNotebookKernelBusy(`Python 3 · running cell ${index + 1}`);
+  try {
+    const result = await api(`${notebookApiUrl()}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ source: cell.source || "" }),
+    });
+    cell.execution_count = result.execution_count ?? null;
+    cell.outputs = Array.isArray(result.outputs) ? result.outputs : [];
+    updateNotebookKernelStatus(result.kernel);
+    refreshNotebookCellResult(index);
+    refreshNotebookPresentationCell(index);
+    markNotebookDirty(`Executed cell ${index + 1}`);
+    return true;
+  } catch (error) {
+    notebookKernelStatus.textContent = "Python 3 · execution failed";
+    notebookKernelStatus.classList.remove("busy", "running");
+    throw error;
+  } finally {
+    element?.classList.remove("notebook-cell-running");
+  }
+}
+
+async function runNotebookCell(index, advance = false) {
+  if (notebookRunning) {
+    setStatus("A notebook execution is already in progress.");
+    return;
+  }
+  notebookRunning = true;
+  setNotebookControlsDisabled(true);
+  try {
+    await executeNotebookCell(index);
+    if (advance) {
+      if (index + 1 < notebookDocument.cells.length) {
+        focusNotebookCell(index + 1);
+      } else {
+        insertNotebookCell("code", notebookDocument.cells.length);
+      }
+    }
+  } finally {
+    notebookRunning = false;
+    setNotebookControlsDisabled(false);
+  }
+}
+
+function setNotebookControlsDisabled(disabled) {
+  [
+    "notebookRunAllBtn",
+    "notebookRestartRunAllBtn",
+    "notebookRestartBtn",
+    "notebookClearOutputsBtn",
+  ].forEach(id => {
+    const button = document.getElementById(id);
+    if (button) button.disabled = disabled;
+  });
+  const interrupt = document.getElementById("notebookInterruptBtn");
+  if (interrupt) interrupt.disabled = false;
+}
+
+async function runAllNotebookCells() {
+  if (!notebookDocument || notebookRunning) return;
+  notebookRunning = true;
+  setNotebookControlsDisabled(true);
+  try {
+    for (let index = 0; index < notebookDocument.cells.length; index += 1) {
+      if (notebookDocument.cells[index].cell_type === "code") {
+        await executeNotebookCell(index);
+      }
+    }
+    setStatus("Notebook run complete.");
+  } finally {
+    notebookRunning = false;
+    setNotebookControlsDisabled(false);
+  }
+}
+
+async function interruptNotebookKernel() {
+  if (!currentFile || !isNotebookPath(currentFile)) return;
+  setNotebookKernelBusy("Python 3 · interrupting…");
+  const result = await api(`${notebookApiUrl()}/kernel/interrupt`, { method: "POST" });
+  setStatus(result.interrupted ? "Kernel interrupt requested." : "No running kernel to interrupt.");
+  const status = await api(`${notebookApiUrl()}/kernel`);
+  updateNotebookKernelStatus(status);
+}
+
+async function restartNotebookKernel() {
+  if (!currentFile || !isNotebookPath(currentFile)) return;
+  setNotebookKernelBusy("Python 3 · restarting…");
+  const result = await api(`${notebookApiUrl()}/kernel/restart`, { method: "POST" });
+  updateNotebookKernelStatus(result.kernel);
+  setStatus("Python kernel restarted.");
+}
+
+async function restartAndRunAllNotebookCells() {
+  if (notebookRunning) return;
+  await restartNotebookKernel();
+  await runAllNotebookCells();
+}
+
+function clearNotebookOutputs() {
+  if (!notebookDocument) return;
+  notebookDocument.cells.forEach((cell, index) => {
+    if (cell.cell_type !== "code") return;
+    cell.outputs = [];
+    cell.execution_count = null;
+    refreshNotebookCellResult(index);
+  });
+  markNotebookDirty("Cleared notebook outputs");
+}
+
+async function createNotebook(targetFolder = selectedFolder()) {
+  if (!currentProject) return;
+  const location = targetFolder || "project root";
+  let filename = prompt(`New Python notebook in ${location}\nFilename:`, "analysis.ipynb");
+  if (!filename) return;
+  if (filename.includes("/") || filename.includes("\\")) {
+    setStatus("Enter a filename only; select the destination folder in the sidebar.");
+    return;
+  }
+  if (!filename.toLowerCase().endsWith(".ipynb")) filename += ".ipynb";
+  const path = joinPath(targetFolder, filename);
+  await api(`/api/files/${encodeURIComponent(currentProject)}`, {
+    method: "POST",
+    body: JSON.stringify({ path, content: "" }),
+  });
+  ensureCurrentParentsExpanded(path);
+  await loadProjects(currentProject, path);
+}
+
 
 async function compileCurrentFile() {
   if (currentExtension() !== ".tex") {
@@ -1816,6 +2973,10 @@ document.getElementById("newFileBtn")
   .addEventListener("click", () =>
     createFile().catch(error => setStatus(error.message)));
 
+document.getElementById("newNotebookBtn")
+  ?.addEventListener("click", () =>
+    createNotebook().catch(error => setStatus(error.message)));
+
 document.getElementById("newFolderBtn")
   .addEventListener("click", () =>
     createFolder().catch(error => setStatus(error.message)));
@@ -1850,6 +3011,44 @@ document.getElementById("uploadInput")
     event.target.value = "";
   });
 
+
+
+document.getElementById("notebookAddMarkdownBtn")?.addEventListener("click", () => {
+  const index = notebookSelectedIndex >= 0 ? notebookSelectedIndex + 1 : notebookDocument?.cells.length || 0;
+  insertNotebookCell("markdown", index);
+});
+document.getElementById("notebookAddCodeBtn")?.addEventListener("click", () => {
+  const index = notebookSelectedIndex >= 0 ? notebookSelectedIndex + 1 : notebookDocument?.cells.length || 0;
+  insertNotebookCell("code", index);
+});
+document.getElementById("notebookAddEndMarkdownBtn")?.addEventListener("click", () =>
+  insertNotebookCell("markdown", notebookDocument?.cells.length || 0));
+document.getElementById("notebookAddEndCodeBtn")?.addEventListener("click", () =>
+  insertNotebookCell("code", notebookDocument?.cells.length || 0));
+document.getElementById("notebookRunAllBtn")?.addEventListener("click", () =>
+  runAllNotebookCells().catch(error => setStatus(`Run failed: ${error.message}`)));
+document.getElementById("notebookRestartRunAllBtn")?.addEventListener("click", () =>
+  restartAndRunAllNotebookCells().catch(error => setStatus(`Run failed: ${error.message}`)));
+document.getElementById("notebookInterruptBtn")?.addEventListener("click", () =>
+  interruptNotebookKernel().catch(error => setStatus(`Interrupt failed: ${error.message}`)));
+document.getElementById("notebookRestartBtn")?.addEventListener("click", () =>
+  restartNotebookKernel().catch(error => setStatus(`Restart failed: ${error.message}`)));
+document.getElementById("notebookClearOutputsBtn")?.addEventListener("click", clearNotebookOutputs);
+document.getElementById("notebookPresentBtn")?.addEventListener("click", () =>
+  openNotebookPresentation().catch(error => setStatus(`Presentation failed: ${error.message}`)));
+document.getElementById("notebookExportBtn")?.addEventListener("click", () =>
+  openNotebookExportDialog().catch(error => setStatus(`Export setup failed: ${error.message}`)));
+document.getElementById("notebookPresentationCloseBtn")?.addEventListener("click", () =>
+  closeNotebookPresentation().catch(error => setStatus(error.message)));
+document.getElementById("notebookPresentationPrevBtn")?.addEventListener("click", () => notebookRevealDeck?.prev());
+document.getElementById("notebookPresentationNextBtn")?.addEventListener("click", () => notebookRevealDeck?.next());
+document.getElementById("notebookPresentationOverviewBtn")?.addEventListener("click", () => notebookRevealDeck?.toggleOverview());
+notebookExportFormat?.addEventListener("change", updateNotebookExportSelection);
+notebookExportRunBtn?.addEventListener("click", () =>
+  runNotebookExport().catch(error => {
+    notebookExportResult.textContent = `Export failed: ${error.message}`;
+    setStatus(`Export failed: ${error.message}`);
+  }));
 
 fileContextMenu.querySelectorAll("[data-file-action]").forEach(button => {
   button.addEventListener("click", () => {
@@ -1929,6 +3128,11 @@ diagramBuilderModal?.addEventListener("click", event => {
 });
 
 document.addEventListener("keydown", event => {
+  if (!notebookWorkspace.hidden && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    saveCurrentNotebook().catch(error => setStatus(error.message));
+    return;
+  }
   if (event.key === "Escape" && diagramBuilderModal && !diagramBuilderModal.hidden) {
     event.preventDefault();
     closeDiagramBuilder();

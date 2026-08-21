@@ -5,3 +5,7 @@ builds/*
 !builds/.gitkeep
 documents/*
 figures/*
+
+# Vendored browser dependency populated by scripts/vendor_ace.py
+tech_documents/web/static/vendor/ace/
+tech_documents/web/static/vendor/reveal/

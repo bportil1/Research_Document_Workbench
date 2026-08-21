@@ -32,8 +32,11 @@ from .errors import (
     ItemNotFoundError,
     UnsupportedFileTypeError,
 )
+from .notebooks import NotebookRuntime, notebook_dependencies
+from .notebook_exports import NotebookExportService
 from .paths import (
     ALLOWED_EXTENSIONS,
+    NOTEBOOK_EXTENSIONS,
     DIAGRAM_ASSET_EXTENSIONS,
     normalize_relative_path,
     relative_to_project,
@@ -63,6 +66,8 @@ class DocumentEngine:
         self.base_dir = Path(base_dir).resolve()
         self.documents_dir = self.base_dir / "documents"
         self.builds_dir = self.base_dir / "builds"
+        self.notebooks = NotebookRuntime()
+        self.notebook_exports = NotebookExportService()
         self.ensure_directories()
 
     # ------------------------------------------------------------------
@@ -222,6 +227,7 @@ class DocumentEngine:
         project_path = self.project_path(project)
         if not project_path.exists():
             raise ItemNotFoundError("Project does not exist.")
+        self.notebooks.shutdown_under(project_path)
         shutil.rmtree(project_path)
 
     # ------------------------------------------------------------------
@@ -229,6 +235,8 @@ class DocumentEngine:
     # ------------------------------------------------------------------
     def read_file(self, project: str, filename: str) -> dict[str, str]:
         file_path = self.editable_file_path(project, filename)
+        if file_path.suffix.lower() in NOTEBOOK_EXTENSIONS:
+            raise UnsupportedFileTypeError("Use the notebook API for .ipynb files.")
         if not file_path.exists() or not file_path.is_file():
             raise ItemNotFoundError("File does not exist.")
         project_path = self.project_path(project)
@@ -242,6 +250,8 @@ class DocumentEngine:
         if not isinstance(content, str):
             raise DocumentEngineError("Content must be text.")
         file_path = self.editable_file_path(project, filename)
+        if file_path.suffix.lower() in NOTEBOOK_EXTENSIONS:
+            raise UnsupportedFileTypeError("Use the notebook API for .ipynb files.")
         if not file_path.parent.exists() or not file_path.parent.is_dir():
             raise ItemNotFoundError("Parent directory does not exist.")
         file_path.write_text(content, encoding="utf-8")
@@ -253,8 +263,110 @@ class DocumentEngine:
             raise ItemNotFoundError("Parent directory does not exist.")
         if file_path.exists():
             raise ItemConflictError("File already exists.")
-        file_path.write_text(str(content), encoding="utf-8")
+        if file_path.suffix.lower() in NOTEBOOK_EXTENSIONS:
+            self.notebooks.create(file_path)
+        else:
+            file_path.write_text(str(content), encoding="utf-8")
         return relative_to_project(self.project_path(project), file_path)
+
+    # ------------------------------------------------------------------
+    # Jupyter notebooks
+    # ------------------------------------------------------------------
+    def _notebook_path(self, project: str, filename: str) -> Path:
+        file_path = self.editable_file_path(project, filename)
+        if file_path.suffix.lower() not in NOTEBOOK_EXTENSIONS:
+            raise UnsupportedFileTypeError("Notebook operations require a .ipynb file.")
+        if not file_path.exists() or not file_path.is_file():
+            raise ItemNotFoundError("Notebook does not exist.")
+        return file_path
+
+    def read_notebook(self, project: str, filename: str) -> dict[str, Any]:
+        file_path = self.editable_file_path(project, filename)
+        if file_path.suffix.lower() not in NOTEBOOK_EXTENSIONS:
+            raise UnsupportedFileTypeError("Notebook operations require a .ipynb file.")
+        notebook = self.notebooks.load(file_path)
+        return {
+            "project": safe_name(project),
+            "filename": relative_to_project(self.project_path(project), file_path),
+            "notebook": notebook,
+            "kernel": self.notebooks.status(file_path),
+        }
+
+    def save_notebook(self, project: str, filename: str, notebook: dict[str, Any]) -> str:
+        file_path = self.editable_file_path(project, filename)
+        if file_path.suffix.lower() not in NOTEBOOK_EXTENSIONS:
+            raise UnsupportedFileTypeError("Notebook operations require a .ipynb file.")
+        if not file_path.exists() or not file_path.is_file():
+            raise ItemNotFoundError("Notebook does not exist.")
+        self.notebooks.save(file_path, notebook)
+        return relative_to_project(self.project_path(project), file_path)
+
+    def notebook_kernel_status(self, project: str, filename: str) -> dict[str, Any]:
+        file_path = self.editable_file_path(project, filename)
+        if file_path.suffix.lower() not in NOTEBOOK_EXTENSIONS:
+            raise UnsupportedFileTypeError("Notebook operations require a .ipynb file.")
+        return self.notebooks.status(file_path)
+
+    def execute_notebook_cell(
+        self,
+        project: str,
+        filename: str,
+        source: str,
+        *,
+        timeout: float = 120.0,
+    ) -> dict[str, Any]:
+        file_path = self.editable_file_path(project, filename)
+        if file_path.suffix.lower() not in NOTEBOOK_EXTENSIONS:
+            raise UnsupportedFileTypeError("Notebook operations require a .ipynb file.")
+        if not file_path.exists() or not file_path.is_file():
+            raise ItemNotFoundError("Notebook does not exist.")
+        return self.notebooks.execute(
+            file_path,
+            self.project_path(project),
+            source,
+            timeout=timeout,
+        )
+
+    def interrupt_notebook_kernel(self, project: str, filename: str) -> bool:
+        file_path = self.editable_file_path(project, filename)
+        return self.notebooks.interrupt(file_path)
+
+    def restart_notebook_kernel(self, project: str, filename: str) -> dict[str, Any]:
+        file_path = self.editable_file_path(project, filename)
+        return self.notebooks.restart(file_path, self.project_path(project))
+
+    def shutdown_notebook_kernel(self, project: str, filename: str) -> bool:
+        file_path = self.editable_file_path(project, filename)
+        return self.notebooks.shutdown(file_path)
+
+    def notebook_capabilities(self) -> dict[str, Any]:
+        return {
+            **notebook_dependencies(),
+            "presentation": {
+                "reveal": self.notebook_exports.capabilities()["reveal"],
+            },
+            "exports": self.notebook_exports.capabilities(),
+        }
+
+    def notebook_export_capabilities(self, project: str, filename: str) -> dict[str, Any]:
+        self._notebook_path(project, filename)
+        return self.notebook_exports.capabilities()
+
+    def export_notebook(
+        self,
+        project: str,
+        filename: str,
+        *,
+        format_id: str,
+        output_name: str | None = None,
+    ) -> dict[str, Any]:
+        notebook_path = self._notebook_path(project, filename)
+        return self.notebook_exports.export(
+            notebook_path,
+            project_root=self.project_path(project),
+            format_id=format_id,
+            output_name=output_name,
+        )
 
     def create_folder(self, project: str, path: str) -> str:
         folder_path = self.item_path(project, path)
@@ -281,6 +393,7 @@ class DocumentEngine:
             raise InvalidPathError("A folder cannot be moved inside itself.")
 
         source_rel = relative_to_project(project_path, source_path)
+        self.notebooks.shutdown_under(source_path)
         source_path.rename(destination_path)
         return {
             "source": source_rel,
@@ -295,6 +408,7 @@ class DocumentEngine:
         if not path.exists():
             raise ItemNotFoundError("Item does not exist.")
         relative = relative_to_project(project_path, path)
+        self.notebooks.shutdown_under(path)
         if path.is_dir():
             shutil.rmtree(path)
         else:
@@ -305,6 +419,7 @@ class DocumentEngine:
         file_path = self.item_path(project, filename)
         if not file_path.exists() or not file_path.is_file():
             raise ItemNotFoundError("File does not exist.")
+        self.notebooks.shutdown(file_path)
         file_path.unlink()
 
     def upload_file(self, project: str, filename: str, stream: BinaryIO, folder: str = "") -> str:
@@ -522,8 +637,8 @@ class DocumentEngine:
             log=combined_log[-30000:],
         )
 
-    def health(self) -> dict[str, bool]:
-        return available_compilers()
+    def health(self) -> dict[str, Any]:
+        return {**available_compilers(), "notebooks": notebook_dependencies()}
 
 
 __all__ = [

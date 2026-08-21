@@ -1,1 +1,2 @@
-# The reusable tech_documents core uses only the Python standard library.
+# Core project, text, diagram, and LaTeX helpers use only the Python standard library.
+# Notebook read/write/execution is optional at the API level and uses the notebook extra.

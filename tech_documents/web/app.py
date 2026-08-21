@@ -167,6 +167,114 @@ def create_file(project: str) -> Response:
     return jsonify({"ok": True, "filename": saved})
 
 
+@app.get("/api/notebooks/capabilities")
+def notebook_capabilities() -> Response:
+    return jsonify(engine.notebook_capabilities())
+
+
+@app.get("/api/notebooks/<project>/<path:filename>")
+def read_notebook(project: str, filename: str) -> Response:
+    try:
+        result = engine.read_notebook(project, filename)
+    except DocumentEngineError as exc:
+        _abort_engine_error(exc)
+    return jsonify(result)
+
+
+@app.put("/api/notebooks/<project>/<path:filename>")
+def save_notebook(project: str, filename: str) -> Response:
+    payload = request.get_json(force=True)
+    notebook = payload.get("notebook")
+    if not isinstance(notebook, dict):
+        abort(400, "Notebook data must be an object.")
+    try:
+        saved = engine.save_notebook(project, filename, notebook)
+    except DocumentEngineError as exc:
+        _abort_engine_error(exc)
+    return jsonify({"ok": True, "filename": saved})
+
+
+@app.get("/api/notebooks/<project>/<path:filename>/kernel")
+def notebook_kernel_status(project: str, filename: str) -> Response:
+    try:
+        result = engine.notebook_kernel_status(project, filename)
+    except DocumentEngineError as exc:
+        _abort_engine_error(exc)
+    return jsonify(result)
+
+
+@app.post("/api/notebooks/<project>/<path:filename>/execute")
+def execute_notebook_cell(project: str, filename: str) -> Response:
+    payload = request.get_json(force=True)
+    source = payload.get("source", "")
+    if not isinstance(source, str):
+        abort(400, "Notebook cell source must be text.")
+    try:
+        result = engine.execute_notebook_cell(
+            project,
+            filename,
+            source,
+            timeout=float(payload.get("timeout", 120.0)),
+        )
+    except (TypeError, ValueError):
+        abort(400, "Notebook execution timeout must be numeric.")
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify(result)
+
+
+@app.post("/api/notebooks/<project>/<path:filename>/kernel/interrupt")
+def interrupt_notebook_kernel(project: str, filename: str) -> Response:
+    try:
+        interrupted = engine.interrupt_notebook_kernel(project, filename)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, "interrupted": interrupted})
+
+
+@app.post("/api/notebooks/<project>/<path:filename>/kernel/restart")
+def restart_notebook_kernel(project: str, filename: str) -> Response:
+    try:
+        status = engine.restart_notebook_kernel(project, filename)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, "kernel": status})
+
+
+@app.post("/api/notebooks/<project>/<path:filename>/kernel/shutdown")
+def shutdown_notebook_kernel(project: str, filename: str) -> Response:
+    try:
+        stopped = engine.shutdown_notebook_kernel(project, filename)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, "stopped": stopped})
+
+
+@app.get("/api/notebooks/<project>/<path:filename>/exports")
+def notebook_export_capabilities(project: str, filename: str) -> Response:
+    try:
+        result = engine.notebook_export_capabilities(project, filename)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify(result)
+
+
+@app.post("/api/notebooks/<project>/<path:filename>/exports")
+def export_notebook(project: str, filename: str) -> Response:
+    payload = request.get_json(force=True)
+    try:
+        result = engine.export_notebook(
+            project,
+            filename,
+            format_id=str(payload.get("format", "")),
+            output_name=str(payload.get("output_name", "") or "") or None,
+        )
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    result["download_url"] = f"/api/download/{safe_name(project)}/{result['path']}"
+    return jsonify(result)
+
+
 @app.post("/api/folders/<project>")
 def create_folder(project: str) -> Response:
     payload = request.get_json(force=True)

@@ -4,12 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-document-workbench"
-version = "0.3.0"
+version = "0.5.1"
 description = "Standalone technical document workbench with a reusable document/diagram engine"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-web = ["Flask>=3.0,<4"]
+notebook = [
+  "nbformat>=5.10,<6",
+  "jupyter_client>=8.6,<9",
+  "ipykernel>=6.29,<8",
+  "nbconvert>=7.16,<8",
+]
+web = [
+  "Flask>=3.0,<4",
+  "nbformat>=5.10,<6",
+  "jupyter_client>=8.6,<9",
+  "ipykernel>=6.29,<8",
+  "nbconvert>=7.16,<8",
+]
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]

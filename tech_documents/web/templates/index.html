@@ -8,6 +8,8 @@
     href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <link rel="stylesheet"
     href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github-dark.min.css">
+  <link rel="stylesheet" href="/static/vendor/reveal/dist/reveal.css">
+  <link rel="stylesheet" href="/static/vendor/reveal/dist/theme/white.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -32,6 +34,7 @@
         <strong>Files</strong>
         <div class="file-actions">
           <button id="newFileBtn" class="small" title="New file">+F</button>
+          <button id="newNotebookBtn" class="small" title="New Python notebook">+N</button>
           <button id="newFolderBtn" class="small" title="New folder">+D</button>
           <label for="uploadInput" class="small file-label" title="Upload into selected folder">↑</label>
           <input id="uploadInput" type="file">
@@ -46,7 +49,7 @@
     </aside>
 
     <main class="main-area">
-      <div class="toolbar">
+      <div id="textToolbar" class="toolbar">
         <div class="toolbar-group history-controls">
           <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>Undo</button>
           <button id="redoBtn" title="Redo (Ctrl+Shift+Z or Ctrl+Y)" disabled>Redo</button>
@@ -86,6 +89,32 @@
         </div>
       </div>
 
+      <section id="notebookWorkspace" class="notebook-workspace" hidden aria-label="Notebook editor">
+        <div class="notebook-toolbar">
+          <div class="notebook-toolbar-group">
+            <strong id="notebookFilename">Notebook</strong>
+            <span id="notebookKernelStatus" class="notebook-kernel-status">Python kernel · not started</span>
+          </div>
+          <div class="notebook-toolbar-group">
+            <button id="notebookAddMarkdownBtn" type="button">+ Markdown</button>
+            <button id="notebookAddCodeBtn" type="button">+ Code</button>
+            <button id="notebookRunAllBtn" type="button" class="primary">Run All</button>
+            <button id="notebookRestartRunAllBtn" type="button">Restart & Run All</button>
+            <button id="notebookInterruptBtn" type="button">Interrupt</button>
+            <button id="notebookRestartBtn" type="button">Restart Kernel</button>
+            <button id="notebookClearOutputsBtn" type="button">Clear Outputs</button>
+            <button id="notebookPresentBtn" type="button">Present</button>
+            <button id="notebookExportBtn" type="button">Export…</button>
+          </div>
+        </div>
+        <div id="notebookDependencyNotice" class="notebook-dependency-notice" hidden></div>
+        <div id="notebookCells" class="notebook-cells"></div>
+        <div class="notebook-end-controls">
+          <button id="notebookAddEndMarkdownBtn" type="button">+ Markdown cell</button>
+          <button id="notebookAddEndCodeBtn" type="button">+ Code cell</button>
+        </div>
+      </section>
+
       <div id="editorGrid" class="editor-grid split">
         <section class="editor-pane">
           <div class="pane-title">
@@ -107,6 +136,51 @@
       </div>
     </main>
   </div>
+
+  <section id="notebookPresentation" class="notebook-presentation" hidden aria-label="Notebook presentation">
+    <div class="notebook-presentation-bar">
+      <div>
+        <strong id="notebookPresentationTitle">Notebook presentation</strong>
+        <span id="notebookPresentationStatus">Live notebook · same Python kernel</span>
+      </div>
+      <div class="notebook-presentation-actions">
+        <button id="notebookPresentationPrevBtn" type="button" title="Previous slide">←</button>
+        <button id="notebookPresentationNextBtn" type="button" title="Next slide">→</button>
+        <button id="notebookPresentationOverviewBtn" type="button">Overview</button>
+        <button id="notebookPresentationCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+    <div id="notebookReveal" class="reveal notebook-reveal">
+      <div id="notebookRevealSlides" class="slides"></div>
+    </div>
+  </section>
+
+  <dialog id="notebookExportDialog" class="notebook-export-dialog">
+    <form method="dialog" class="notebook-export-shell">
+      <div class="notebook-export-header">
+        <div>
+          <h2>Export Notebook</h2>
+          <p>Use stored notebook outputs. Exporting never executes cells.</p>
+        </div>
+        <button value="cancel" aria-label="Close export dialog">×</button>
+      </div>
+      <div id="notebookExportPreflight" class="notebook-export-preflight"></div>
+      <label class="notebook-export-field">
+        <span>Format</span>
+        <select id="notebookExportFormat"></select>
+      </label>
+      <label class="notebook-export-field">
+        <span>Output name</span>
+        <input id="notebookExportName" type="text" placeholder="analysis">
+      </label>
+      <div id="notebookExportDescription" class="notebook-export-description"></div>
+      <div id="notebookExportResult" class="notebook-export-result"></div>
+      <div class="notebook-export-actions">
+        <button value="cancel">Cancel</button>
+        <button id="notebookExportRunBtn" type="button" class="primary">Export</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="fileContextMenu" class="file-context-menu" hidden>
     <button type="button" data-file-action="open">Open</button>
@@ -244,11 +318,14 @@
 
   <script src="https://cdn.jsdelivr.net/npm/marked@14.1.2/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script src="/static/highlight_compat.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="/static/vendor/ace/ace.js"></script>
+  <script src="/static/vendor/reveal/dist/reveal.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -17,10 +17,12 @@ The future host should integrate through `DocumentEngine` rather than importing 
 The module owns document-specific behavior:
 
 - local research/document project structure;
-- Markdown, LaTeX, BibTeX, text, and `.diagram` file operations;
+- Markdown, LaTeX, BibTeX, text, `.diagram`, and structured `.ipynb` file operations;
 - safe project-relative path handling;
 - `.diagram` parsing, serialization, and Mermaid generation;
 - diagram asset persistence and insertion into Markdown/LaTeX;
+- local Python Jupyter notebook creation, persistence, and kernel execution;
+- notebook slideshow metadata, live presentation coordination, and non-executing export orchestration;
 - LaTeX build workspace creation and compilation;
 - project archiving;
 - the existing standalone Research Document Workbench UI.
@@ -33,6 +35,8 @@ The browser application under `tech_documents/web/` retains the existing editor 
 - autosave;
 - editor undo/redo;
 - browser preview rendering;
+- structured notebook cell editing and common Jupyter output rendering;
+- live Reveal.js notebook presentations and preflighted notebook exports;
 - Diagram Builder controls;
 - browser-side SVG/PNG/PDF diagram export;
 - CDN-loaded browser rendering libraries.
@@ -54,6 +58,6 @@ The standalone editor remains fully functional; this boundary only prevents the 
 
 ## Dependency rule
 
-`tech_documents` core must not depend on Flask. Flask is used only by `tech_documents.web`.
+`tech_documents` core must not depend on Flask. Flask is used only by `tech_documents.web`. Notebook dependencies are loaded lazily by the reusable notebook runtime so hosts that do not use notebooks are not forced to initialize Jupyter. Export tooling is capability-gated: nbconvert is used for local HTML/Markdown/Reveal output, while Quarto and LaTeX remain optional external tools for additional formats.
 
 Other major modules (`code_analyzer`, `reference_manager`) should not be imported by this module. Cross-module behavior belongs in the future host's integration layer.

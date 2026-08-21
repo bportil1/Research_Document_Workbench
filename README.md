@@ -2,7 +2,8 @@
 
 A local Flask application for:
 
-- Markdown notebooks
+- Markdown documents
+- first-class Python Jupyter notebooks (`.ipynb`)
 - LaTeX paper development
 - BibTeX editing
 - editable `.diagram` graph sources
@@ -40,9 +41,10 @@ cd Research_Document_Workbench
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+python3 scripts/vendor_ace.py
 ```
 
-The reusable `tech_documents` core itself uses only the Python standard library; `Flask` is needed only for the standalone browser application.
+The reusable project/text/diagram core remains importable without Flask or Jupyter. Notebook methods load `nbformat` and the local Jupyter kernel runtime only when notebook functionality is used. The standalone browser requirements include those notebook dependencies. Ace is vendored locally for notebook code cells so normal notebook editing does not depend on a code-editor CDN.
 
 ## 3. Run the standalone app
 
@@ -87,6 +89,8 @@ Research_Document_Workbench/
 │   ├── api.py                  # public DocumentEngine boundary
 │   ├── compilation.py
 │   ├── paths.py
+│   ├── notebooks.py
+│   ├── notebook_exports.py
 │   ├── diagrams/
 │   │   ├── format.py
 │   │   └── assets.py
@@ -106,6 +110,39 @@ Research_Document_Workbench/
 ```
 
 See `MODULE.md` for the module boundary and `docs/ARCHITECTURE.md` for the integration architecture.
+
+
+## Python notebook workflow
+
+`.ipynb` files are first-class Workbench documents rather than raw JSON text. Existing notebooks can be uploaded or opened from the project tree, and **+N** creates a new Python notebook.
+
+The notebook surface supports:
+
+- Markdown, Python code, and raw cells;
+- add, delete, duplicate, reorder, and cell-type conversion;
+- rendered Markdown with local project images and notebook attachments;
+- per-cell execution with **Ctrl+Enter**;
+- run-and-advance with **Shift+Enter**;
+- Run All and Restart & Run All;
+- kernel interrupt and restart;
+- output clearing;
+- stdout/stderr, tracebacks, HTML, JSON, SVG, PNG, JPEG, and plain-text outputs;
+- notebook autosave while preserving notebook/cell metadata and attachments.
+
+Execution uses a local `python3` Jupyter kernel started in the project directory. The Workbench prefers the Python environment that launched the application, so relative project paths and the active Workbench environment behave naturally. Kernel processes are local and are started only when code is executed.
+
+Notebook cells can also carry standard Jupyter slideshow roles (new slide, sub-slide, fragment, skip, and speaker notes). **Present** opens a live Reveal.js presentation inside the Workbench using the same notebook model and running Python kernel, so presentation code cells can be executed without creating a separate slide deck.
+
+**Export…** provides a single preflighted export surface. HTML, Markdown, and offline Reveal.js presentations use `nbconvert`; Word, PowerPoint, PDF, and Beamer outputs become available when a local Quarto installation is detected. PDF/Beamer readiness also checks for a local TeX engine. Export consumes the outputs already stored in the notebook and never reruns cells. Generated files are written under `builds/notebooks/`.
+
+For source checkouts, populate the local browser assets once with:
+
+```bash
+python3 scripts/vendor_ace.py
+python3 scripts/vendor_reveal.py
+```
+
+Normal editing, execution, and presentation then use local assets rather than a Reveal.js CDN.
 
 ## Markdown support
 
@@ -155,7 +192,7 @@ The app falls back to Tectonic when `latexmk` is unavailable.
 
 The application binds to `127.0.0.1` by default and is intended for local use.
 
-The LaTeX compiler executes the source you provide. Do not compile untrusted `.tex` projects without reviewing them first.
+The LaTeX compiler executes the source you provide. Notebook code cells also execute local Python code through a Jupyter kernel. Do not compile or execute untrusted projects without reviewing them first.
 
 ## Notes
 
@@ -171,7 +208,7 @@ The **Files** panel is a recursive project-directory view rather than a flat fil
 - **↑** uploads a file into the selected folder.
 - Right-click a file or folder to open its context menu with **Rename**, **Move**, and **Delete** actions.
 - Drag a file or folder onto another folder (or onto the project-root row) to move it.
-- Nested `.md`, `.markdown`, `.tex`, `.bib`, `.txt`, and `.diagram` files can be opened, edited, autosaved, and compiled where applicable.
+- Nested `.md`, `.markdown`, `.tex`, `.bib`, `.txt`, `.diagram`, and `.ipynb` files can be opened and managed with their appropriate Workbench editor.
 - Other project assets are shown in the tree and can still be moved, renamed, deleted, or downloaded as part of the project archive, even though they are not editable in the text editor.
 
 Folder deletion is recursive and always asks for confirmation in the browser.

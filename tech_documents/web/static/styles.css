@@ -863,3 +863,486 @@ button:disabled:hover {
 .diagram-output-section [hidden] {
   display: none !important;
 }
+
+/* First-class Jupyter notebook workspace */
+.notebook-workspace {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.notebook-workspace[hidden] {
+  display: none !important;
+}
+
+.notebook-toolbar {
+  min-height: 48px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+
+.notebook-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.notebook-kernel-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notebook-kernel-status.running {
+  color: var(--accent2);
+}
+
+.notebook-kernel-status.busy {
+  color: #ffd479;
+}
+
+.notebook-dependency-notice {
+  margin: 12px auto 0;
+  width: min(980px, calc(100% - 32px));
+  padding: 10px 12px;
+  border: 1px solid #6f5323;
+  border-radius: 6px;
+  background: #2a2113;
+  color: #f0d7a0;
+  font-size: 13px;
+}
+
+.notebook-cells {
+  flex: 1;
+  overflow: auto;
+  padding: 18px max(18px, calc((100% - 1120px) / 2));
+  scroll-padding-top: 18px;
+}
+
+.notebook-cell {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  margin: 0 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.notebook-cell:focus-within,
+.notebook-cell.selected {
+  border-color: #46769a;
+  box-shadow: 0 0 0 1px #27465d;
+}
+
+.notebook-cell-gutter {
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--muted);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-align: right;
+}
+
+.notebook-cell-main {
+  min-width: 0;
+}
+
+.notebook-cell-header {
+  min-height: 34px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: #151c22;
+}
+
+.notebook-cell-kind {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.notebook-cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.notebook-cell-actions button,
+.notebook-cell-actions select {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.notebook-code-editor {
+  width: 100%;
+  min-height: 90px;
+  background: var(--panel);
+}
+
+.notebook-code-fallback,
+.notebook-markdown-editor {
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  padding: 14px 16px;
+  background: var(--panel);
+  color: var(--text);
+  font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  tab-size: 4;
+}
+
+.notebook-markdown-editor {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.notebook-markdown-rendered {
+  padding: 14px 18px;
+  background: var(--paper);
+  color: var(--paper-text);
+  line-height: 1.6;
+  cursor: text;
+}
+
+.notebook-markdown-rendered:empty::before {
+  content: "Empty Markdown cell — double-click to edit";
+  color: #788692;
+  font-style: italic;
+}
+
+.notebook-markdown-rendered pre {
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: #101418;
+  color: #e9eef2;
+}
+
+.notebook-output {
+  border-top: 1px solid var(--border);
+  background: #10161b;
+}
+
+.notebook-output:empty {
+  display: none;
+}
+
+.notebook-output-item {
+  padding: 10px 16px;
+  overflow: auto;
+  border-top: 1px solid #202a32;
+}
+
+.notebook-output-item:first-child {
+  border-top: 0;
+}
+
+.notebook-output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #dfe7ed;
+}
+
+.notebook-output .stderr,
+.notebook-output .error {
+  color: #ffaaa3;
+}
+
+.notebook-output img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: white;
+}
+
+.notebook-output-html {
+  overflow: auto;
+  padding: 2px;
+  background: white;
+  color: #17212b;
+}
+
+.notebook-cell-running {
+  opacity: .78;
+}
+
+.notebook-end-controls {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 18px 20px;
+}
+
+@media (max-width: 760px) {
+  .notebook-cell {
+    grid-template-columns: 1fr;
+  }
+
+  .notebook-cell-gutter {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+
+  .notebook-cells {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
+
+/* Notebook presentation + export */
+.notebook-slide-role {
+  min-width: 108px;
+}
+
+.notebook-presentation {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  background: #0b1730;
+}
+
+.notebook-presentation[hidden] {
+  display: none;
+}
+
+.notebook-presentation-bar {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 14px;
+  background: #0a2342;
+  color: #fff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.notebook-presentation-bar > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.notebook-presentation-bar span {
+  color: #b8d8f4;
+  font-size: 12px;
+}
+
+.notebook-presentation-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.notebook-presentation-actions button,
+.notebook-presentation-code-header button {
+  border: 1px solid #7bb7e4;
+  background: #123b63;
+  color: #fff;
+  border-radius: 3px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.notebook-reveal {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  background: #fff;
+}
+
+.notebook-reveal .slides {
+  text-align: left;
+}
+
+.notebook-reveal .slides section {
+  box-sizing: border-box;
+}
+
+.notebook-presentation-cell {
+  margin: 0 0 0.75em;
+}
+
+.notebook-presentation-markdown {
+  font-size: 0.74em;
+  line-height: 1.38;
+}
+
+.notebook-presentation-markdown h1,
+.notebook-presentation-markdown h2,
+.notebook-presentation-markdown h3 {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.notebook-presentation-markdown img,
+.notebook-presentation-output img {
+  max-height: 48vh;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.notebook-presentation-code {
+  font-size: 0.52em;
+}
+
+.notebook-presentation-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76em;
+  color: #40556d;
+}
+
+.notebook-presentation-code pre {
+  width: 100%;
+  margin: 0 0 8px;
+  box-shadow: none;
+}
+
+.notebook-presentation-output {
+  max-height: 35vh;
+  overflow: auto;
+  border-top: 1px solid #d6e0ea;
+  padding-top: 6px;
+}
+
+.notebook-presentation-output pre {
+  white-space: pre-wrap;
+  color: #172536;
+  background: #f5f8fb;
+}
+
+.notebook-reveal aside.notes {
+  display: none;
+}
+
+.notebook-export-dialog {
+  width: min(760px, calc(100vw - 32px));
+  border: 1px solid #8ea9c0;
+  border-radius: 4px;
+  padding: 0;
+  background: #f8fbfe;
+  color: #172536;
+}
+
+.notebook-export-dialog::backdrop {
+  background: rgba(4, 18, 36, 0.62);
+}
+
+.notebook-export-shell {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.notebook-export-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  border-bottom: 1px solid #c8d7e4;
+  padding-bottom: 12px;
+}
+
+.notebook-export-header h2 {
+  margin: 0 0 4px;
+}
+
+.notebook-export-header p {
+  margin: 0;
+  color: #52677c;
+}
+
+.notebook-export-preflight {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.notebook-export-capability {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #c8d7e4;
+  background: #fff;
+  padding: 10px;
+}
+
+.notebook-export-capability.available span {
+  color: #146b45;
+  font-weight: 700;
+}
+
+.notebook-export-capability.missing span {
+  color: #9a3f2d;
+  font-weight: 700;
+}
+
+.notebook-export-capability small,
+.notebook-export-description {
+  color: #586c80;
+}
+
+.notebook-export-field {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.notebook-export-field select,
+.notebook-export-field input {
+  min-width: 0;
+  padding: 7px;
+}
+
+.notebook-export-result {
+  min-height: 24px;
+  padding: 8px 10px;
+  background: #eef5fa;
+  border-left: 3px solid #4b87b7;
+}
+
+.notebook-export-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .notebook-export-preflight {
+    grid-template-columns: 1fr;
+  }
+  .notebook-export-field {
+    grid-template-columns: 1fr;
+  }
+  .notebook-presentation-bar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
