@@ -1,0 +1,94 @@
+/* PAH visual identity adapter for Research Document Workbench. */
+:root {
+  color-scheme: light;
+  --bg: var(--pah-page);
+  --panel: var(--pah-surface);
+  --panel2: var(--pah-surface-2);
+  --panel3: var(--pah-surface-3, #eaf1f5);
+  --text: var(--pah-text);
+  --muted: var(--pah-muted);
+  --border: var(--pah-border);
+  --accent: var(--pah-blue-600);
+  --accent2: var(--pah-sky-300);
+  --danger: #a83a3a;
+  --paper: #fff;
+  --paper-text: var(--pah-text);
+}
+html,
+body.pah-module { background: var(--pah-page); color: var(--pah-text); }
+.topbar {
+  min-height: 48px;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, var(--pah-navy-800), var(--pah-navy-900));
+  color: #fff;
+  border-bottom: 2px solid var(--pah-sky-300);
+}
+.topbar h1 { color: #fff; font-size: 17px; letter-spacing: .025em; text-transform: uppercase; }
+.topbar .status { color: rgb(255 255 255 / .70); }
+.topbar button { background: rgb(255 255 255 / .10); color: #fff; border-color: rgb(255 255 255 / .30); box-shadow: none; }
+.topbar button:hover { background: rgb(255 255 255 / .18); color: #fff; border-color: rgb(255 255 255 / .52); }
+.topbar select { background: #fff; color: var(--pah-text); }
+.workspace { background: var(--pah-page); }
+.sidebar { background: var(--pah-surface); border-right-color: var(--pah-border); }
+.sidebar-header {
+  min-height: 32px;
+  padding: 5px 8px;
+  background: var(--pah-navy-900);
+  color: #fff;
+  border-color: var(--pah-navy-950);
+  font-size: 10px;
+  letter-spacing: .065em;
+  text-transform: uppercase;
+}
+.sidebar-header button,
+.sidebar-header .file-label { min-height: 23px; padding: 2px 6px; background: rgb(255 255 255 / .10); color: #fff; border-color: rgb(255 255 255 / .28); box-shadow: none; }
+.file-list,
+.outline { background: #fff; }
+.file-item,
+.outline a { padding: 6px 7px; border-radius: var(--pah-radius-xs); }
+.file-item:hover,
+.outline a:hover { background: #e7f2f8; }
+.file-item.active { background: #d6ebf5; color: var(--pah-navy-950); box-shadow: inset 3px 0 var(--pah-blue-600); }
+.toolbar.pah-toolbar { min-height: 39px; padding: 5px 7px; background: var(--pah-surface-2); }
+.toolbar button { min-height: 26px; padding: 3px 7px; }
+.toolbar button.active { background: #dceef8; color: var(--pah-navy-900); border-color: var(--pah-blue-600); }
+.search-group input { background: #fff; color: var(--pah-text); border-color: var(--pah-border-strong); border-radius: var(--pah-radius-sm); }
+.editor-pane { background: var(--pah-editor); border-right-color: #303946; }
+.editor-pane .pane-title {
+  background: #20262e;
+  color: #b4c0cc;
+  border-color: #303946;
+}
+#editor {
+  background: var(--pah-editor);
+  color: #d7dee8;
+  caret-color: #fff;
+}
+#editor::selection { background: rgb(142 202 230 / .28); }
+.preview-pane { background: #fff; }
+.preview-pane .pane-title {
+  background: var(--pah-navy-900);
+  color: #fff;
+  border-bottom: 2px solid var(--pah-sky-300);
+}
+.document-preview { background: #fff; color: var(--pah-text); }
+.document-preview table { border-color: #d6dfe5; }
+.document-preview th { background: #edf6fb; color: var(--pah-navy-900); }
+.compiler-log,
+pre code.hljs { background: var(--pah-terminal); color: #d7dee8; }
+.diagram-builder-shell { border-radius: var(--pah-radius-sm); background: var(--pah-surface); }
+.diagram-builder-header,
+.diagram-builder-footer,
+.diagram-builder-pane-title {
+  background: var(--pah-navy-900);
+  color: #fff;
+  border-color: var(--pah-navy-950);
+}
+.diagram-builder-subtitle,
+.diagram-builder-hint,
+.diagram-builder-pane-title span { color: rgb(255 255 255 / .68); }
+.diagram-output-section { border-radius: var(--pah-radius-sm); background: var(--pah-surface-2); border-color: var(--pah-border); }
+@media (max-width: 900px) {
+  .topbar { align-items: stretch; }
+  .workspace { background: var(--pah-page); }
+}

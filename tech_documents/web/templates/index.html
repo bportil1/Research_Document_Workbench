@@ -11,9 +11,11 @@
   <link rel="stylesheet" href="/static/vendor/reveal/dist/reveal.css">
   <link rel="stylesheet" href="/static/vendor/reveal/dist/theme/white.css">
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/pah-module-theme.css">
+  <link rel="stylesheet" href="/static/pah-compat.css">
 </head>
-<body>
-  <header class="topbar">
+<body class="pah-module" data-pah-module-root>
+  <header class="topbar pah-module-header">
     <div>
       <h1>Research Document Workbench</h1>
       <div id="status" class="status">Ready</div>
@@ -49,7 +51,7 @@
     </aside>
 
     <main class="main-area">
-      <div id="textToolbar" class="toolbar">
+      <div id="textToolbar" class="toolbar pah-toolbar">
         <div class="toolbar-group history-controls">
           <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>Undo</button>
           <button id="redoBtn" title="Redo (Ctrl+Shift+Z or Ctrl+Y)" disabled>Redo</button>
