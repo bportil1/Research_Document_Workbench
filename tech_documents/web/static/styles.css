@@ -1346,3 +1346,262 @@ button:disabled:hover {
     flex-wrap: wrap;
   }
 }
+
+/* LaTeX usability sprint: keep app chrome and document navigation independent of document scroll. */
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  flex: 0 0 auto;
+}
+
+.document-context-bar {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 5px 12px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  overflow-x: auto;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.document-context-bar code {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+.main-area,
+.editor-grid,
+.editor-pane,
+.preview-pane {
+  min-height: 0;
+}
+
+.main-area {
+  overflow: hidden;
+}
+
+.toolbar,
+.pane-title,
+.editor-statusbar {
+  flex: 0 0 auto;
+}
+
+.editor-statusbar {
+  min-height: 34px;
+  padding: 5px 9px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.editor-nav-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.editor-nav-actions button {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.editor-location-hint {
+  color: var(--muted);
+}
+
+.build-diagnostics {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #15191e;
+  color: var(--text);
+}
+
+.build-diagnostics-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+
+.build-diagnostics-header > div:first-child {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+#buildDiagnosticsSummary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.build-diagnostics-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.build-diagnostics-list {
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.build-diagnostic {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  background: var(--panel);
+}
+
+.build-diagnostic.error { border-left-color: #ff7b72; }
+.build-diagnostic.warning { border-left-color: #d9a441; }
+.build-diagnostic.secondary { opacity: 0.72; }
+
+.build-diagnostic-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.build-diagnostic-location {
+  color: var(--accent2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.build-diagnostic-suggestion,
+.build-diagnostic-detail {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.build-diagnostic-actions {
+  margin-top: 7px;
+}
+
+.build-diagnostic-actions button {
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.workbench-dialog {
+  width: min(680px, calc(100vw - 32px));
+  border: 1px solid var(--border);
+  padding: 0;
+  background: var(--panel2);
+  color: var(--text);
+}
+
+.workbench-dialog::backdrop {
+  background: rgb(0 0 0 / 0.65);
+}
+
+.workbench-dialog-shell {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.workbench-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+.workbench-dialog-header h2,
+.workbench-dialog-header p {
+  margin: 0;
+}
+
+.workbench-dialog-header p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workbench-field {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workbench-field input,
+.workbench-field select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 4px;
+}
+
+.workbench-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workbench-inline-actions,
+.workbench-dialog-actions {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.workbench-dialog-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.workbench-dialog-message {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media print {
+  .document-context-bar,
+  .editor-statusbar,
+  .build-diagnostics {
+    display: none !important;
+  }
+}

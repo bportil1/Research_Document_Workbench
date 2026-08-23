@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +14,8 @@ class CompilationResult:
     pdf_path: Path | None = None
     log: str = ""
     error: str = ""
+    diagnostics: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    preflight: dict[str, object] = field(default_factory=dict)
 
 
 def prepare_build_workspace(project_path: Path, builds_dir: Path, build_id: str) -> tuple[Path, Path]:
@@ -21,7 +23,13 @@ def prepare_build_workspace(project_path: Path, builds_dir: Path, build_id: str)
     build_root = builds_dir / build_id
     source_dir = build_root / "source"
     output_dir = build_root / "output"
-    shutil.copytree(project_path, source_dir)
+    shutil.copytree(
+        project_path,
+        source_dir,
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache"
+        ),
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     return source_dir, output_dir
 

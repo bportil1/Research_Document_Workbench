@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import binascii
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,7 @@ from .errors import (
     UnsupportedFileTypeError,
 )
 from .notebooks import NotebookRuntime, notebook_dependencies
+from .latex_tools import parse_latex_log, preflight_latex
 from .notebook_exports import NotebookExportService
 from .paths import (
     ALLOWED_EXTENSIONS,
@@ -66,6 +68,7 @@ class DocumentEngine:
         self.base_dir = Path(base_dir).resolve()
         self.documents_dir = self.base_dir / "documents"
         self.builds_dir = self.base_dir / "builds"
+        self.project_registry_path = self.base_dir / ".workbench-projects.json"
         self.notebooks = NotebookRuntime()
         self.notebook_exports = NotebookExportService()
         self.ensure_directories()
@@ -77,14 +80,130 @@ class DocumentEngine:
         self.documents_dir.mkdir(parents=True, exist_ok=True)
         self.builds_dir.mkdir(parents=True, exist_ok=True)
 
+    def _load_project_registry(self) -> dict[str, Any]:
+        if not self.project_registry_path.exists():
+            return {"version": 1, "projects": {}}
+        try:
+            raw = json.loads(self.project_registry_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"version": 1, "projects": {}}
+        projects = raw.get("projects") if isinstance(raw, dict) else None
+        return {"version": 1, "projects": projects if isinstance(projects, dict) else {}}
+
+    def _save_project_registry(self, registry: dict[str, Any]) -> None:
+        self.project_registry_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.project_registry_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temp.replace(self.project_registry_path)
+
+    def _project_record(self, project: str) -> dict[str, Any]:
+        name = safe_name(project, "default")
+        registry = self._load_project_registry()
+        record = registry["projects"].get(name, {})
+        return record if isinstance(record, dict) else {}
+
     def project_path(self, project: str) -> Path:
-        return safe_project_path(self.documents_dir, project)
+        project_name = safe_name(project, "default")
+        record = self._project_record(project_name)
+        if record.get("linked") and record.get("path"):
+            return Path(str(record["path"])).expanduser().resolve()
+        return safe_project_path(self.documents_dir, project_name)
 
     def item_path(self, project: str, relative_path: str, *, allow_empty: bool = False) -> Path:
-        return safe_item_path(self.documents_dir, project, relative_path, allow_empty=allow_empty)
+        project_path = self.project_path(project).resolve()
+        normalized = normalize_relative_path(relative_path, allow_empty=allow_empty)
+        path = (project_path / normalized).resolve() if normalized else project_path
+        if path != project_path and project_path not in path.parents:
+            raise InvalidPathError("Path leaves the project directory.")
+        return path
 
     def editable_file_path(self, project: str, relative_path: str) -> Path:
-        return safe_editable_file_path(self.documents_dir, project, relative_path)
+        path = self.item_path(project, relative_path)
+        if path.suffix.lower() not in ALLOWED_EXTENSIONS:
+            raise UnsupportedFileTypeError("Unsupported editable file type.")
+        return path
+
+    def documents_root_path(self, project: str) -> Path:
+        project_path = self.project_path(project).resolve()
+        record = self._project_record(project)
+        relative = normalize_relative_path(str(record.get("documents_root", "")), allow_empty=True)
+        path = (project_path / relative).resolve() if relative else project_path
+        if path != project_path and project_path not in path.parents:
+            raise InvalidPathError("Documents Root leaves the project directory.")
+        return path
+
+    def project_context(self, project: str) -> dict[str, Any]:
+        name = safe_name(project, "default")
+        project_path = self.project_path(name)
+        record = self._project_record(name)
+        documents_root = normalize_relative_path(str(record.get("documents_root", "")), allow_empty=True)
+        documents_path = self.documents_root_path(name)
+        return {
+            "project": name,
+            "project_root": str(project_path),
+            "documents_root": documents_root,
+            "documents_path": str(documents_path),
+            "build_root": str(documents_path),
+            "main_tex": str(record.get("main_tex", "") or ""),
+            "linked": bool(record.get("linked", False)),
+        }
+
+    def set_project_context(
+        self,
+        project: str,
+        *,
+        documents_root: str = "",
+        main_tex: str = "",
+    ) -> dict[str, Any]:
+        name = safe_name(project, "default")
+        project_path = self.project_path(name).resolve()
+        normalized_root = normalize_relative_path(documents_root, allow_empty=True)
+        documents_path = (project_path / normalized_root).resolve() if normalized_root else project_path
+        if documents_path != project_path and project_path not in documents_path.parents:
+            raise InvalidPathError("Documents Root leaves the project directory.")
+        if not documents_path.exists() or not documents_path.is_dir():
+            raise ItemNotFoundError("Documents Root does not exist.")
+
+        normalized_main = normalize_relative_path(main_tex, allow_empty=True)
+        if normalized_main:
+            main_path = (project_path / normalized_main).resolve()
+            if main_path.suffix.lower() != ".tex" or not main_path.is_file():
+                raise ItemNotFoundError("Configured main LaTeX file does not exist.")
+            if main_path != documents_path and documents_path not in main_path.parents:
+                raise InvalidPathError("Main LaTeX file must be inside the Documents Root.")
+
+        registry = self._load_project_registry()
+        record = registry["projects"].setdefault(name, {})
+        if not isinstance(record, dict):
+            record = {}
+            registry["projects"][name] = record
+        record["documents_root"] = normalized_root
+        record["main_tex"] = normalized_main
+        self._save_project_registry(registry)
+        return self.project_context(name)
+
+    def link_project(self, path: str | Path, *, name: str | None = None) -> str:
+        target = Path(path).expanduser().resolve()
+        if not target.exists() or not target.is_dir():
+            raise ItemNotFoundError("The folder to attach does not exist.")
+        base_name = safe_name(name or target.name, "linked_project")
+        registry = self._load_project_registry()
+        candidate = base_name
+        suffix = 2
+        while (self.documents_dir / candidate).exists() or candidate in registry["projects"]:
+            existing = registry["projects"].get(candidate)
+            if isinstance(existing, dict) and existing.get("linked") and Path(str(existing.get("path", ""))).expanduser().resolve() == target:
+                return candidate
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        registry["projects"][candidate] = {
+            "linked": True,
+            "path": str(target),
+            "documents_root": "",
+            "main_tex": "",
+        }
+        self._save_project_registry(registry)
+        return candidate
 
     def build_file_path(self, build_id: str, filename: str) -> Path:
         safe_build_id = safe_name(build_id)
@@ -118,6 +237,8 @@ class DocumentEngine:
                 return []
 
             for child in children:
+                if child.is_dir() and child.name in {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache"}:
+                    continue
                 rel_path = relative_to_project(project_path, child)
                 if child.is_dir():
                     nodes.append(
@@ -151,17 +272,31 @@ class DocumentEngine:
     def list_projects(self) -> list[dict[str, Any]]:
         self.ensure_directories()
         projects: list[dict[str, Any]] = []
-        for project_dir in sorted(
-            (p for p in self.documents_dir.iterdir() if p.is_dir() and not p.is_symlink()),
-            key=lambda p: p.name.lower(),
-        ):
-            tree, files = self.build_project_tree(project_dir)
-            projects.append({"name": project_dir.name, "tree": tree, "files": files})
+        registry = self._load_project_registry()
+        names = {
+            p.name for p in self.documents_dir.iterdir()
+            if p.is_dir() and not p.is_symlink()
+        }
+        names.update(str(name) for name, record in registry["projects"].items() if isinstance(record, dict) and record.get("linked"))
+
+        for name in sorted(names, key=str.lower):
+            try:
+                project_dir = self.project_path(name)
+                if not project_dir.exists() or not project_dir.is_dir():
+                    continue
+                tree, files = self.build_project_tree(project_dir)
+                context = self.project_context(name)
+                projects.append({"name": name, "tree": tree, "files": files, **context})
+            except DocumentEngineError:
+                continue
         return projects
 
     def create_project(self, name: str) -> str:
         project_name = safe_name(name, "new_project")
-        project_path = self.project_path(project_name)
+        record = self._project_record(project_name)
+        if record.get("linked"):
+            raise ItemConflictError("A linked project already uses that name.")
+        project_path = safe_project_path(self.documents_dir, project_name)
         project_path.mkdir(parents=True, exist_ok=True)
 
         starter_tex = project_path / "paper.tex"
@@ -221,14 +356,25 @@ class DocumentEngine:
                 encoding="utf-8",
             )
 
+        self.set_project_context(project_name, documents_root="", main_tex="paper.tex")
         return project_name
 
     def delete_project(self, project: str) -> None:
-        project_path = self.project_path(project)
+        name = safe_name(project, "default")
+        project_path = self.project_path(name)
         if not project_path.exists():
             raise ItemNotFoundError("Project does not exist.")
         self.notebooks.shutdown_under(project_path)
+        registry = self._load_project_registry()
+        record = registry["projects"].get(name, {})
+        if isinstance(record, dict) and record.get("linked"):
+            registry["projects"].pop(name, None)
+            self._save_project_registry(registry)
+            return
         shutil.rmtree(project_path)
+        if name in registry["projects"]:
+            registry["projects"].pop(name, None)
+            self._save_project_registry(registry)
 
     # ------------------------------------------------------------------
     # Editable text files and directories
@@ -572,19 +718,143 @@ class DocumentEngine:
         }
 
     # ------------------------------------------------------------------
+    # LaTeX project setup / diagnostics
+    # ------------------------------------------------------------------
+    def create_latex_project(
+        self,
+        project: str,
+        *,
+        directory: str = "",
+        template: str = "article",
+        title: str = "Research Document",
+        authors: str = "",
+        create_bibliography: bool = True,
+        create_images: bool = True,
+        set_documents_root: bool = True,
+    ) -> dict[str, Any]:
+        project_path = self.project_path(project).resolve()
+        relative_dir = normalize_relative_path(directory, allow_empty=True)
+        target = (project_path / relative_dir).resolve() if relative_dir else project_path
+        if target != project_path and project_path not in target.parents:
+            raise InvalidPathError("LaTeX project directory leaves the project root.")
+        target.mkdir(parents=True, exist_ok=True)
+
+        templates = {
+            "article": ("article", "plain"),
+            "ieee-conference": ("IEEEtran", "IEEEtran"),
+            "ieee-journal": ("IEEEtran", "IEEEtran"),
+            "report": ("report", "plain"),
+            "blank": ("article", "plain"),
+        }
+        if template not in templates:
+            raise DocumentEngineError("Unknown LaTeX template.")
+        document_class, bib_style = templates[template]
+        class_options = "[conference]" if template == "ieee-conference" else "[journal]" if template == "ieee-journal" else ""
+        main = target / "main.tex"
+        bib = target / "bib.bib"
+        images = target / "images"
+        conflicts = [path.name for path in (main, bib) if path.exists()]
+        if conflicts:
+            raise ItemConflictError(f"LaTeX project would overwrite existing file(s): {', '.join(conflicts)}")
+
+        escaped_title = str(title or "Research Document").replace("\n", " ").strip() or "Research Document"
+        escaped_authors = str(authors or "").replace("\n", " ").strip()
+        body = [
+            f"\\documentclass{class_options}{{{document_class}}}",
+            "",
+            "\\usepackage{amsmath}",
+            "\\usepackage{amssymb}",
+            "\\usepackage{graphicx}",
+            "\\usepackage{booktabs}",
+            "\\usepackage{url}",
+            "",
+            f"\\title{{{escaped_title}}}",
+            f"\\author{{{escaped_authors}}}",
+            "",
+            "\\begin{document}",
+            "\\maketitle",
+            "",
+            "\\begin{abstract}",
+            "Describe the purpose, method, and main result.",
+            "\\end{abstract}",
+            "",
+            "\\section{Introduction}",
+            "",
+            "\\section{Method}",
+            "",
+            "\\section{Results}",
+            "",
+            "\\section{Conclusion}",
+            "",
+        ]
+        if create_bibliography:
+            body.extend([f"\\bibliographystyle{{{bib_style}}}", "\\bibliography{bib}", ""])
+        body.extend(["\\end{document}", ""])
+        main.write_text("\n".join(body), encoding="utf-8")
+        if create_bibliography:
+            bib.write_text(
+                "@article{example2026,\n"
+                "  title={Example Reference},\n"
+                "  author={Author, Example},\n"
+                "  journal={Example Journal},\n"
+                "  year={2026}\n"
+                "}\n",
+                encoding="utf-8",
+            )
+        if create_images:
+            images.mkdir(exist_ok=True)
+
+        main_rel = relative_to_project(project_path, main)
+        if set_documents_root:
+            self.set_project_context(project, documents_root=relative_dir, main_tex=main_rel)
+        return {
+            "directory": relative_dir,
+            "main_tex": main_rel,
+            "bibliography": relative_to_project(project_path, bib) if create_bibliography else "",
+            "images": relative_to_project(project_path, images) if create_images else "",
+            "template": template,
+        }
+
+    def latex_preflight(self, project: str, filename: str) -> dict[str, object]:
+        source_file = self.editable_file_path(project, filename)
+        if source_file.suffix.lower() != ".tex" or not source_file.is_file():
+            raise UnsupportedFileTypeError("LaTeX preflight requires an existing .tex file.")
+        return preflight_latex(
+            source_file,
+            project_root=self.project_path(project),
+            documents_root=self.documents_root_path(project),
+        ).to_dict()
+
+    # ------------------------------------------------------------------
     # LaTeX compilation
     # ------------------------------------------------------------------
-    def compile_latex(self, project: str, filename: str) -> CompilationResult:
+    def compile_latex(self, project: str, filename: str, *, force: bool = False) -> CompilationResult:
         source_file = self.editable_file_path(project, filename)
         if source_file.suffix.lower() != ".tex":
             raise UnsupportedFileTypeError("Only .tex files can be compiled.")
         if not source_file.exists():
             raise ItemNotFoundError("LaTeX source does not exist.")
 
+        project_path = self.project_path(project).resolve()
+        documents_root = self.documents_root_path(project).resolve()
+        preflight = preflight_latex(source_file, project_root=project_path, documents_root=documents_root)
+        preflight_payload = preflight.to_dict()
+        if preflight.blockers and not force:
+            return CompilationResult(
+                ok=False,
+                status_code=409,
+                error="LaTeX preflight found blockers.",
+                diagnostics=tuple(item.to_dict() for item in preflight.diagnostics),
+                preflight=preflight_payload,
+            )
+
+        try:
+            relative_source = source_file.resolve().relative_to(documents_root)
+        except ValueError as exc:
+            raise InvalidPathError("LaTeX source must be inside the configured Documents Root.") from exc
+
         build_id = uuid.uuid4().hex
-        project_path = self.project_path(project)
-        source_dir, output_dir = prepare_build_workspace(project_path, self.builds_dir, build_id)
-        relative_source = source_file.relative_to(project_path)
+        source_dir, output_dir = prepare_build_workspace(documents_root, self.builds_dir, build_id)
         build_source_file = source_dir / relative_source
 
         compiler = None
@@ -594,47 +864,50 @@ class DocumentEngine:
             compiler = compile_with_tectonic
 
         if compiler is None:
+            diagnostic = {
+                "severity": "error",
+                "code": "missing-compiler",
+                "message": "No LaTeX compiler was found.",
+                "file": "",
+                "line": None,
+                "suggestion": "Install latexmk/TeX Live or Tectonic.",
+                "detail": "",
+                "secondary": False,
+            }
             return CompilationResult(
-                ok=False,
-                status_code=503,
-                build_id=build_id,
-                error="No LaTeX compiler found.",
-                log=(
-                    "Install latexmk with:\n"
-                    "sudo apt install latexmk texlive-latex-extra\n\n"
-                    "or install Tectonic."
-                ),
+                ok=False, status_code=503, build_id=build_id, error="No LaTeX compiler found.",
+                log="Install latexmk with:\nsudo apt install latexmk texlive-latex-extra\n\nor install Tectonic.",
+                diagnostics=(diagnostic,), preflight=preflight_payload,
             )
 
         try:
             result = compiler(build_source_file, output_dir)
         except subprocess.TimeoutExpired:
+            diagnostic = {
+                "severity": "error", "code": "compile-timeout", "message": "LaTeX compilation timed out.",
+                "file": relative_to_project(project_path, source_file), "line": None,
+                "suggestion": "Check for an interactive prompt, runaway expansion, or unusually expensive document step.",
+                "detail": "", "secondary": False,
+            }
             return CompilationResult(
-                ok=False,
-                status_code=504,
-                build_id=build_id,
-                error="Compilation timed out.",
-                log="The LaTeX compiler exceeded the 120-second limit.",
+                ok=False, status_code=504, build_id=build_id, error="Compilation timed out.",
+                log="The LaTeX compiler exceeded the 120-second limit.", diagnostics=(diagnostic,),
+                preflight=preflight_payload,
             )
 
         pdf_path = output_dir / f"{build_source_file.stem}.pdf"
         combined_log = "\n".join(part for part in [result.stdout, result.stderr] if part)
+        parsed = tuple(item.to_dict() for item in parse_latex_log(combined_log))
 
         if result.returncode != 0 or not pdf_path.exists():
             return CompilationResult(
-                ok=False,
-                status_code=422,
-                build_id=build_id,
-                error="LaTeX compilation failed.",
-                log=combined_log[-30000:],
+                ok=False, status_code=422, build_id=build_id, error="LaTeX compilation failed.",
+                log=combined_log[-30000:], diagnostics=parsed, preflight=preflight_payload,
             )
 
         return CompilationResult(
-            ok=True,
-            status_code=200,
-            build_id=build_id,
-            pdf_path=pdf_path,
-            log=combined_log[-30000:],
+            ok=True, status_code=200, build_id=build_id, pdf_path=pdf_path,
+            log=combined_log[-30000:], diagnostics=parsed, preflight=preflight_payload,
         )
 
     def health(self) -> dict[str, Any]:

@@ -48,6 +48,38 @@ def projects() -> Response:
     return jsonify({"projects": engine.list_projects()})
 
 
+@app.post("/api/projects/link")
+def link_project() -> Response:
+    payload = request.get_json(force=True)
+    try:
+        name = engine.link_project(str(payload.get("path", "")), name=str(payload.get("name", "") or "") or None)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, "project": name, "context": engine.project_context(name)})
+
+
+@app.get("/api/projects/<project>/context")
+def project_context(project: str) -> Response:
+    try:
+        return jsonify({"ok": True, **engine.project_context(project)})
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+
+
+@app.put("/api/projects/<project>/context")
+def update_project_context(project: str) -> Response:
+    payload = request.get_json(force=True)
+    try:
+        result = engine.set_project_context(
+            project,
+            documents_root=str(payload.get("documents_root", "")),
+            main_tex=str(payload.get("main_tex", "")),
+        )
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, **result})
+
+
 @app.post("/api/diagram/parse")
 def parse_diagram_source() -> Response:
     payload = request.get_json(force=True)
@@ -368,30 +400,55 @@ def download_project(project: str):
     )
 
 
+@app.post("/api/latex/projects/<project>")
+def create_latex_project(project: str) -> Response:
+    payload = request.get_json(force=True)
+    try:
+        result = engine.create_latex_project(
+            project,
+            directory=str(payload.get("directory", "")),
+            template=str(payload.get("template", "article")),
+            title=str(payload.get("title", "Research Document")),
+            authors=str(payload.get("authors", "")),
+            create_bibliography=bool(payload.get("create_bibliography", True)),
+            create_images=bool(payload.get("create_images", True)),
+            set_documents_root=bool(payload.get("set_documents_root", True)),
+        )
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, **result, "context": engine.project_context(project)})
+
+
+@app.post("/api/latex/preflight/<project>/<path:filename>")
+def latex_preflight(project: str, filename: str) -> Response:
+    try:
+        result = engine.latex_preflight(project, filename)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, "preflight": result})
+
+
 @app.post("/api/compile/<project>/<path:filename>")
 def compile_latex(project: str, filename: str) -> Response:
+    payload = request.get_json(silent=True) or {}
     try:
-        result = engine.compile_latex(project, filename)
+        result = engine.compile_latex(project, filename, force=bool(payload.get("force", False)))
     except DocumentEngineError as exc:
         _abort_engine_error(exc)
 
+    response = {
+        "ok": result.ok,
+        "error": result.error,
+        "log": result.log,
+        "diagnostics": list(result.diagnostics),
+        "preflight": result.preflight,
+    }
     if not result.ok:
-        return jsonify(
-            {
-                "ok": False,
-                "error": result.error,
-                "log": result.log,
-            }
-        ), result.status_code
+        return jsonify(response), result.status_code
 
     assert result.pdf_path is not None
-    return jsonify(
-        {
-            "ok": True,
-            "pdf_url": f"/api/builds/{result.build_id}/{result.pdf_path.name}",
-            "log": result.log,
-        }
-    )
+    response["pdf_url"] = f"/api/builds/{result.build_id}/{result.pdf_path.name}"
+    return jsonify(response)
 
 
 @app.get("/api/builds/<build_id>/<filename>")

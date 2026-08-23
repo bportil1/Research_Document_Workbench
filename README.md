@@ -176,17 +176,23 @@ $$
 
 ## LaTeX workflow
 
-Open a `.tex` file and edit the source directly.
+The Workbench separates the **Project Root** from the **Documents Root**. This allows an attached repository such as `HSQA_DBN/` to remain the project root while `HSQA_DBN/overleaf/` is the LaTeX/build root. **Directory context** always shows the project root, Documents Root, configured main `.tex`, and effective build directory. Existing local repositories can be opened in place with **Attach folder**; Workbench does not copy or delete the external repository.
 
-Press **Compile LaTeX** to run:
+**New LaTeX…** creates a starter project from Standard Article, IEEE Conference, IEEE Journal, Report, or minimal templates. It can create `main.tex`, `bib.bib`, and `images/`, and can make the new directory the Documents Root immediately.
+
+Press **Compile LaTeX** to run deterministic preflight checks before `latexmk`. The preflight checks common document classes/packages, included files and figures, bibliography files, duplicate BibTeX keys, missing citation keys, and basic label/reference problems. Blocking findings are shown before compilation with **Build anyway** available when intentionally needed.
+
+Compiler output is summarized into actionable diagnostics with file/line jump actions. Downstream warning floods (for example unresolved citations after a BibTeX failure) are de-emphasized while the primary error is shown first. The complete compiler output remains available through **Show raw log**.
+
+The text editor keeps line/column status and Top / Line / Bottom / previous-error / next-error controls visible while the document itself scrolls. The application toolbar and filesystem/outline sidebar are independent from document scrolling.
+
+The actual compiler command remains:
 
 ```bash
 latexmk -pdf -interaction=nonstopmode -halt-on-error
 ```
 
-The resulting PDF appears in the preview pane.
-
-The app falls back to Tectonic when `latexmk` is unavailable.
+The resulting PDF appears in the preview pane. The app falls back to Tectonic when `latexmk` is unavailable.
 
 ## Security
 

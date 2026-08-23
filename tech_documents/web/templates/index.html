@@ -22,13 +22,23 @@
     </div>
     <div class="top-actions">
       <select id="projectSelect" title="Project"></select>
+      <button id="attachProjectBtn" title="Attach an existing local repository or folder">Attach folder</button>
+      <button id="projectContextBtn" title="Inspect or change project/Documents build roots">Directory context</button>
       <button id="newProjectBtn">New project</button>
+      <button id="newLatexProjectBtn">New LaTeX…</button>
       <button id="downloadProjectBtn">Download project</button>
       <button id="saveBtn" class="primary">Save</button>
       <button id="compileBtn">Compile LaTeX</button>
       <button id="printBtn">Print preview</button>
     </div>
   </header>
+
+  <div id="documentContextBar" class="document-context-bar" aria-label="Document directory context">
+    <span><strong>Project</strong> <code id="contextProjectRoot">—</code></span>
+    <span><strong>Documents</strong> <code id="contextDocumentsRoot">—</code></span>
+    <span><strong>Main</strong> <code id="contextMainTex">—</code></span>
+    <span><strong>Build from</strong> <code id="contextBuildRoot">—</code></span>
+  </div>
 
   <div class="workspace">
     <aside class="sidebar">
@@ -121,9 +131,19 @@
         <section class="editor-pane">
           <div class="pane-title">
             <span id="currentFilename">No file selected</span>
-            <span id="cursorStatus">Ln 1, Col 1</span>
+            <span class="editor-location-hint">Text editor</span>
           </div>
           <textarea id="editor" spellcheck="false"></textarea>
+          <div class="editor-statusbar" aria-label="Editor navigation">
+            <span id="cursorStatus">Ln 1, Col 1</span>
+            <div class="editor-nav-actions">
+              <button id="goTopBtn" type="button" title="Go to first line">Top</button>
+              <button id="goLineBtn" type="button" title="Go to line">Line…</button>
+              <button id="goBottomBtn" type="button" title="Go to last line">Bottom</button>
+              <button id="prevBuildErrorBtn" type="button" title="Previous build issue" disabled>Prev error</button>
+              <button id="nextBuildErrorBtn" type="button" title="Next build issue" disabled>Next error</button>
+            </div>
+          </div>
         </section>
 
         <section class="preview-pane">
@@ -133,6 +153,19 @@
           </div>
           <article id="markdownPreview" class="document-preview"></article>
           <iframe id="pdfPreview" class="pdf-preview" title="Compiled PDF"></iframe>
+          <section id="buildDiagnostics" class="build-diagnostics" hidden aria-label="LaTeX build diagnostics">
+            <div class="build-diagnostics-header">
+              <div>
+                <strong id="buildDiagnosticsTitle">LaTeX diagnostics</strong>
+                <span id="buildDiagnosticsSummary"></span>
+              </div>
+              <div class="build-diagnostics-actions">
+                <button id="buildAnywayBtn" type="button" hidden>Build anyway</button>
+                <button id="toggleRawLogBtn" type="button">Show raw log</button>
+              </div>
+            </div>
+            <div id="buildDiagnosticsList" class="build-diagnostics-list"></div>
+          </section>
           <pre id="compilerLog" class="compiler-log"></pre>
         </section>
       </div>
@@ -156,6 +189,106 @@
       <div id="notebookRevealSlides" class="slides"></div>
     </div>
   </section>
+
+  <dialog id="projectContextDialog" class="workbench-dialog">
+    <form method="dialog" class="workbench-dialog-shell">
+      <div class="workbench-dialog-header">
+        <div>
+          <h2>Directory Context</h2>
+          <p>Keep the repository root separate from the document/build root.</p>
+        </div>
+        <button value="cancel" aria-label="Close directory context">×</button>
+      </div>
+      <label class="workbench-field">
+        <span>Project root</span>
+        <input id="projectRootDisplay" type="text" readonly>
+      </label>
+      <label class="workbench-field">
+        <span>Documents Root (relative to project root)</span>
+        <input id="documentsRootInput" type="text" placeholder="overleaf">
+      </label>
+      <div class="workbench-inline-actions">
+        <button id="useProjectRootBtn" type="button">Use project root</button>
+        <button id="useCurrentFolderBtn" type="button">Use current file folder</button>
+      </div>
+      <label class="workbench-field">
+        <span>Main LaTeX file</span>
+        <select id="mainTexSelect"></select>
+      </label>
+      <div id="projectContextMessage" class="workbench-dialog-message"></div>
+      <div class="workbench-dialog-actions">
+        <button value="cancel">Cancel</button>
+        <button id="saveProjectContextBtn" type="button" class="primary">Save context</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="attachProjectDialog" class="workbench-dialog">
+    <form method="dialog" class="workbench-dialog-shell">
+      <div class="workbench-dialog-header">
+        <div>
+          <h2>Attach Existing Folder</h2>
+          <p>Open a local repository or directory in place. Workbench will not copy it.</p>
+        </div>
+        <button value="cancel" aria-label="Close attach folder dialog">×</button>
+      </div>
+      <label class="workbench-field">
+        <span>Local folder path</span>
+        <input id="attachProjectPath" type="text" placeholder="~/Documents/venv/HSQA_DBN">
+      </label>
+      <label class="workbench-field">
+        <span>Display name (optional)</span>
+        <input id="attachProjectName" type="text" placeholder="HSQA_DBN">
+      </label>
+      <div id="attachProjectMessage" class="workbench-dialog-message"></div>
+      <div class="workbench-dialog-actions">
+        <button value="cancel">Cancel</button>
+        <button id="attachProjectRunBtn" type="button" class="primary">Attach folder</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="latexProjectDialog" class="workbench-dialog">
+    <form method="dialog" class="workbench-dialog-shell">
+      <div class="workbench-dialog-header">
+        <div>
+          <h2>New LaTeX Document</h2>
+          <p>Create a known-good local LaTeX project scaffold.</p>
+        </div>
+        <button value="cancel" aria-label="Close LaTeX project dialog">×</button>
+      </div>
+      <label class="workbench-field">
+        <span>Directory (relative to project root)</span>
+        <input id="latexProjectDirectory" type="text" placeholder="overleaf">
+      </label>
+      <label class="workbench-field">
+        <span>Template</span>
+        <select id="latexProjectTemplate">
+          <option value="article">Standard Article</option>
+          <option value="ieee-conference">IEEE Conference</option>
+          <option value="ieee-journal">IEEE Journal</option>
+          <option value="report">Report</option>
+          <option value="blank">Blank / Minimal</option>
+        </select>
+      </label>
+      <label class="workbench-field">
+        <span>Title</span>
+        <input id="latexProjectTitle" type="text" value="Research Document">
+      </label>
+      <label class="workbench-field">
+        <span>Authors</span>
+        <input id="latexProjectAuthors" type="text" placeholder="Author Name">
+      </label>
+      <label class="workbench-check"><input id="latexCreateBib" type="checkbox" checked> Create bib.bib</label>
+      <label class="workbench-check"><input id="latexCreateImages" type="checkbox" checked> Create images/</label>
+      <label class="workbench-check"><input id="latexSetDocumentsRoot" type="checkbox" checked> Use this directory as Documents Root</label>
+      <div id="latexProjectMessage" class="workbench-dialog-message"></div>
+      <div class="workbench-dialog-actions">
+        <button value="cancel">Cancel</button>
+        <button id="latexProjectCreateBtn" type="button" class="primary">Create LaTeX project</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="notebookExportDialog" class="notebook-export-dialog">
     <form method="dialog" class="notebook-export-shell">

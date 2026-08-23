@@ -7,6 +7,16 @@ const editor = document.getElementById("editor");
 const markdownPreview = document.getElementById("markdownPreview");
 const pdfPreview = document.getElementById("pdfPreview");
 const compilerLog = document.getElementById("compilerLog");
+const buildDiagnostics = document.getElementById("buildDiagnostics");
+const buildDiagnosticsTitle = document.getElementById("buildDiagnosticsTitle");
+const buildDiagnosticsSummary = document.getElementById("buildDiagnosticsSummary");
+const buildDiagnosticsList = document.getElementById("buildDiagnosticsList");
+const buildAnywayBtn = document.getElementById("buildAnywayBtn");
+const toggleRawLogBtn = document.getElementById("toggleRawLogBtn");
+const contextProjectRoot = document.getElementById("contextProjectRoot");
+const contextDocumentsRoot = document.getElementById("contextDocumentsRoot");
+const contextMainTex = document.getElementById("contextMainTex");
+const contextBuildRoot = document.getElementById("contextBuildRoot");
 const currentFilename = document.getElementById("currentFilename");
 const statusEl = document.getElementById("status");
 const cursorStatus = document.getElementById("cursorStatus");
@@ -52,6 +62,24 @@ const diagramLabelControl = document.getElementById("diagramLabelControl");
 const diagramFigureModeControl = document.getElementById("diagramFigureModeControl");
 const diagramExportInsertBtn = document.getElementById("diagramExportInsertBtn");
 const diagramInsertStatus = document.getElementById("diagramInsertStatus");
+const projectContextDialog = document.getElementById("projectContextDialog");
+const projectRootDisplay = document.getElementById("projectRootDisplay");
+const documentsRootInput = document.getElementById("documentsRootInput");
+const mainTexSelect = document.getElementById("mainTexSelect");
+const projectContextMessage = document.getElementById("projectContextMessage");
+const attachProjectDialog = document.getElementById("attachProjectDialog");
+const attachProjectPath = document.getElementById("attachProjectPath");
+const attachProjectName = document.getElementById("attachProjectName");
+const attachProjectMessage = document.getElementById("attachProjectMessage");
+const latexProjectDialog = document.getElementById("latexProjectDialog");
+const latexProjectDirectory = document.getElementById("latexProjectDirectory");
+const latexProjectTemplate = document.getElementById("latexProjectTemplate");
+const latexProjectTitle = document.getElementById("latexProjectTitle");
+const latexProjectAuthors = document.getElementById("latexProjectAuthors");
+const latexCreateBib = document.getElementById("latexCreateBib");
+const latexCreateImages = document.getElementById("latexCreateImages");
+const latexSetDocumentsRoot = document.getElementById("latexSetDocumentsRoot");
+const latexProjectMessage = document.getElementById("latexProjectMessage");
 
 let projects = [];
 let currentProject = "";
@@ -61,6 +89,9 @@ let dirty = false;
 let autosaveTimer = null;
 let searchMatches = [];
 let searchIndex = -1;
+let activeBuildDiagnostics = [];
+let activeBuildDiagnosticIndex = -1;
+let lastCompilerLog = "";
 const expandedFolders = new Set();
 
 const editorHistories = new Map();
@@ -433,6 +464,7 @@ async function loadProjects(preferredProject, preferredFile) {
 
   projectSelect.value = currentProject;
   const project = projectData();
+  updateProjectContextBar(project);
   const preferredExists = preferredFile &&
     project.files.some(file => file.path === preferredFile && file.editable);
   const currentExists = currentFile &&
@@ -464,6 +496,7 @@ async function loadProjects(preferredProject, preferredFile) {
 async function refreshProjectIndex() {
   const data = await api("/api/projects");
   projects = data.projects;
+  updateProjectContextBar(projectData());
   renderFiles();
 }
 
@@ -1348,7 +1381,8 @@ function renderPlainSourcePreview() {
 
 function updatePreview() {
   pdfPreview.style.display = "none";
-  compilerLog.style.display = "none";
+  hideRawCompilerLog();
+  buildDiagnostics.hidden = true;
   markdownPreview.style.display = "block";
 
   const extension = currentExtension();
@@ -2830,42 +2864,357 @@ async function createNotebook(targetFolder = selectedFolder()) {
 }
 
 
-async function compileCurrentFile() {
-  if (currentExtension() !== ".tex") {
-    setStatus("Select a .tex file before compiling.");
-    compilerLog.textContent = "Compilation is available only for .tex files.";
+
+function updateProjectContextBar(project) {
+  if (!project) {
+    contextProjectRoot.textContent = "—";
+    contextDocumentsRoot.textContent = "—";
+    contextMainTex.textContent = "—";
+    contextBuildRoot.textContent = "—";
+    return;
+  }
+  contextProjectRoot.textContent = project.project_root || project.name;
+  contextDocumentsRoot.textContent = project.documents_root || ".";
+  contextMainTex.textContent = project.main_tex || "not set";
+  contextBuildRoot.textContent = project.build_root || project.documents_path || project.project_root || "—";
+}
+
+function openProjectContextDialog() {
+  const project = projectData();
+  if (!project) return;
+  projectRootDisplay.value = project.project_root || "";
+  documentsRootInput.value = project.documents_root || "";
+  mainTexSelect.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "— use currently opened .tex file —";
+  mainTexSelect.appendChild(none);
+  (project.files || [])
+    .filter(file => file.editable && file.path.toLowerCase().endsWith(".tex"))
+    .forEach(file => {
+      const option = document.createElement("option");
+      option.value = file.path;
+      option.textContent = file.path;
+      mainTexSelect.appendChild(option);
+    });
+  mainTexSelect.value = project.main_tex || "";
+  projectContextMessage.textContent = project.linked
+    ? "Attached project: files remain in their original repository."
+    : "Workbench-managed project.";
+  projectContextDialog.showModal();
+}
+
+async function saveProjectContext() {
+  if (!currentProject) return;
+  projectContextMessage.textContent = "Saving directory context…";
+  try {
+    const data = await api(`/api/projects/${encodeURIComponent(currentProject)}/context`, {
+      method: "PUT",
+      body: JSON.stringify({
+        documents_root: documentsRootInput.value.trim(),
+        main_tex: mainTexSelect.value,
+      }),
+    });
+    projectContextDialog.close();
+    await loadProjects(currentProject, currentFile);
+    setStatus(`Documents Root set to ${data.documents_root || "project root"}.`);
+  } catch (error) {
+    projectContextMessage.textContent = error.message;
+  }
+}
+
+function openAttachProjectDialog() {
+  attachProjectPath.value = "";
+  attachProjectName.value = "";
+  attachProjectMessage.textContent = "The folder is opened in place; it is not copied into Workbench.";
+  attachProjectDialog.showModal();
+}
+
+async function attachExistingProject() {
+  attachProjectMessage.textContent = "Attaching folder…";
+  try {
+    const data = await api("/api/projects/link", {
+      method: "POST",
+      body: JSON.stringify({ path: attachProjectPath.value.trim(), name: attachProjectName.value.trim() }),
+    });
+    attachProjectDialog.close();
+    await loadProjects(data.project);
+    setStatus(`Attached ${data.context.project_root}`);
+  } catch (error) {
+    attachProjectMessage.textContent = error.message;
+  }
+}
+
+function openLatexProjectDialog() {
+  const project = projectData();
+  if (!project) return;
+  latexProjectDirectory.value = project.documents_root || selectedFolder() || "";
+  latexProjectTitle.value = "Research Document";
+  latexProjectAuthors.value = "";
+  latexCreateBib.checked = true;
+  latexCreateImages.checked = true;
+  latexSetDocumentsRoot.checked = true;
+  latexProjectMessage.textContent = "Creates main.tex plus optional bib.bib and images/.";
+  latexProjectDialog.showModal();
+}
+
+async function createLatexProjectFromDialog() {
+  if (!currentProject) return;
+  latexProjectMessage.textContent = "Creating LaTeX project…";
+  try {
+    const data = await api(`/api/latex/projects/${encodeURIComponent(currentProject)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        directory: latexProjectDirectory.value.trim(),
+        template: latexProjectTemplate.value,
+        title: latexProjectTitle.value,
+        authors: latexProjectAuthors.value,
+        create_bibliography: latexCreateBib.checked,
+        create_images: latexCreateImages.checked,
+        set_documents_root: latexSetDocumentsRoot.checked,
+      }),
+    });
+    latexProjectDialog.close();
+    await loadProjects(currentProject, data.main_tex);
+    setStatus(`Created ${data.template} LaTeX project at ${data.directory || "project root"}.`);
+  } catch (error) {
+    latexProjectMessage.textContent = error.message;
+  }
+}
+
+function diagnosticSummary(diagnostics) {
+  const items = diagnostics || [];
+  const errors = items.filter(item => item.severity === "error" && !item.secondary).length;
+  const warnings = items.filter(item => item.severity === "warning" && !item.secondary).length;
+  const secondary = items.filter(item => item.secondary).length;
+  const parts = [];
+  if (errors) parts.push(`${errors} error${errors === 1 ? "" : "s"}`);
+  if (warnings) parts.push(`${warnings} warning${warnings === 1 ? "" : "s"}`);
+  if (secondary) parts.push(`${secondary} downstream message${secondary === 1 ? "" : "s"} suppressed`);
+  return parts.join(" · ") || "No structured issues";
+}
+
+function clearBuildDiagnostics() {
+  activeBuildDiagnostics = [];
+  activeBuildDiagnosticIndex = -1;
+  buildDiagnostics.hidden = true;
+  buildDiagnosticsList.innerHTML = "";
+  buildAnywayBtn.hidden = true;
+  document.getElementById("prevBuildErrorBtn").disabled = true;
+  document.getElementById("nextBuildErrorBtn").disabled = true;
+}
+
+function hideRawCompilerLog() {
+  compilerLog.style.display = "none";
+  toggleRawLogBtn.textContent = "Show raw log";
+}
+
+function toggleRawCompilerLog() {
+  const showing = compilerLog.style.display === "block";
+  if (showing) {
+    hideRawCompilerLog();
+  } else {
+    compilerLog.textContent = lastCompilerLog || "No raw compiler log is available for this result.";
     compilerLog.style.display = "block";
+    toggleRawLogBtn.textContent = "Hide raw log";
+  }
+}
+
+function resolveDiagnosticPath(diagnostic) {
+  const raw = String(diagnostic?.file || "").replace(/^\.\//, "");
+  if (!raw) return "";
+  const project = projectData();
+  if (!project) return "";
+  const exact = project.files.find(file => file.path === raw && file.editable);
+  if (exact) return exact.path;
+  const matches = project.files.filter(file => file.editable && (file.path === raw || file.path.endsWith(`/${raw}`) || file.name === raw));
+  return matches.length === 1 ? matches[0].path : "";
+}
+
+function lineOffset(text, lineNumber) {
+  const target = Math.max(1, Number(lineNumber) || 1);
+  if (target === 1) return 0;
+  let line = 1;
+  let index = 0;
+  while (line < target) {
+    const next = text.indexOf("\n", index);
+    if (next < 0) return text.length;
+    index = next + 1;
+    line += 1;
+  }
+  return index;
+}
+
+async function jumpToLine(lineNumber, path = currentFile) {
+  const savedDiagnostics = [...activeBuildDiagnostics];
+  const savedIndex = activeBuildDiagnosticIndex;
+  if (path && path !== currentFile) await openFile(path);
+  const offset = lineOffset(editor.value, lineNumber);
+  editor.focus();
+  editor.setSelectionRange(offset, offset);
+  const totalLines = Math.max(1, editor.value.split("\n").length);
+  const ratio = totalLines <= 1 ? 0 : (Math.max(1, Number(lineNumber) || 1) - 1) / (totalLines - 1);
+  editor.scrollTop = ratio * Math.max(0, editor.scrollHeight - editor.clientHeight);
+  updateCursorStatus();
+  if (savedDiagnostics.length) {
+    activeBuildDiagnostics = savedDiagnostics;
+    activeBuildDiagnosticIndex = savedIndex;
+    renderBuildDiagnostics(savedDiagnostics, { title: buildDiagnosticsTitle.textContent || "LaTeX diagnostics" });
+  }
+}
+
+async function jumpToDiagnostic(index) {
+  const navigable = activeBuildDiagnostics
+    .map((item, itemIndex) => ({ item, itemIndex }))
+    .filter(entry => entry.item.line || entry.item.file);
+  if (!navigable.length) return;
+  let position = navigable.findIndex(entry => entry.itemIndex === activeBuildDiagnosticIndex);
+  if (position < 0) position = 0;
+  const direction = index < activeBuildDiagnosticIndex ? -1 : 1;
+  position = (position + direction + navigable.length) % navigable.length;
+  const selected = navigable[position];
+  activeBuildDiagnosticIndex = selected.itemIndex;
+  const diagnostic = selected.item;
+  const path = resolveDiagnosticPath(diagnostic);
+  if (diagnostic.line) {
+    await jumpToLine(diagnostic.line, path || currentFile);
+  } else if (path && path !== currentFile) {
+    await openFile(path);
+  }
+}
+
+function renderBuildDiagnostics(diagnostics, options = {}) {
+  activeBuildDiagnostics = [...(diagnostics || [])];
+  activeBuildDiagnosticIndex = activeBuildDiagnostics.length ? 0 : -1;
+  buildDiagnostics.hidden = false;
+  buildDiagnosticsTitle.textContent = options.title || "LaTeX diagnostics";
+  buildDiagnosticsSummary.textContent = options.summary || diagnosticSummary(activeBuildDiagnostics);
+  buildAnywayBtn.hidden = !options.allowForce;
+  buildDiagnosticsList.innerHTML = "";
+
+  const primary = activeBuildDiagnostics.filter(item => !item.secondary);
+  const secondaryCount = activeBuildDiagnostics.length - primary.length;
+  const displayItems = primary.length ? primary : activeBuildDiagnostics;
+  displayItems.forEach((item, displayIndex) => {
+    const actualIndex = activeBuildDiagnostics.indexOf(item);
+    const card = document.createElement("article");
+    card.className = `build-diagnostic ${item.severity || "warning"}${item.secondary ? " secondary" : ""}`;
+    const title = document.createElement("div");
+    title.className = "build-diagnostic-title";
+    const message = document.createElement("span");
+    message.textContent = item.message || "LaTeX issue";
+    title.appendChild(message);
+    if (item.file || item.line) {
+      const location = document.createElement("span");
+      location.className = "build-diagnostic-location";
+      location.textContent = `${item.file || currentFile}${item.line ? `:${item.line}` : ""}`;
+      title.appendChild(location);
+    }
+    card.appendChild(title);
+    if (item.suggestion) {
+      const suggestion = document.createElement("div");
+      suggestion.className = "build-diagnostic-suggestion";
+      suggestion.textContent = item.suggestion;
+      card.appendChild(suggestion);
+    }
+    if (item.detail) {
+      const detail = document.createElement("div");
+      detail.className = "build-diagnostic-detail";
+      detail.textContent = item.detail;
+      card.appendChild(detail);
+    }
+    if (item.line || item.file) {
+      const actions = document.createElement("div");
+      actions.className = "build-diagnostic-actions";
+      const jump = document.createElement("button");
+      jump.type = "button";
+      jump.textContent = item.line ? "Open / jump to issue" : "Open file";
+      jump.addEventListener("click", () => jumpToDiagnostic(actualIndex).catch(error => setStatus(error.message)));
+      actions.appendChild(jump);
+      card.appendChild(actions);
+    }
+    buildDiagnosticsList.appendChild(card);
+  });
+
+  if (secondaryCount) {
+    const note = document.createElement("div");
+    note.className = "build-diagnostic secondary";
+    note.textContent = `${secondaryCount} downstream warning${secondaryCount === 1 ? "" : "s"} hidden because a primary failure should be fixed first.`;
+    buildDiagnosticsList.appendChild(note);
+  }
+
+  const navigable = activeBuildDiagnostics.filter(item => item.line || item.file);
+  document.getElementById("prevBuildErrorBtn").disabled = navigable.length === 0;
+  document.getElementById("nextBuildErrorBtn").disabled = navigable.length === 0;
+  markdownPreview.style.display = "none";
+  pdfPreview.style.display = "none";
+}
+
+async function compileCurrentFile(force = false) {
+  if (!currentProject) return;
+  let target = currentFile;
+  const project = projectData();
+  if (!String(target || "").toLowerCase().endsWith(".tex")) {
+    target = project?.main_tex || "";
+  }
+  if (!target || !target.toLowerCase().endsWith(".tex")) {
+    setStatus("Select a .tex file or configure a Main LaTeX file before compiling.");
+    renderBuildDiagnostics([
+      {
+        severity: "error",
+        code: "no-main-tex",
+        message: "No LaTeX main file is selected.",
+        suggestion: "Open a .tex file or use Directory context to choose the Main LaTeX file.",
+      },
+    ], { title: "Build cannot start" });
     return;
   }
 
+  if (dirty && currentFile === target) await saveCurrentFile();
   const compileButton = document.getElementById("compileBtn");
   compileButton.disabled = true;
-  compileButton.textContent = "Compiling...";
+  compileButton.textContent = force ? "Building anyway..." : "Preflight + Build...";
 
   try {
-    await saveCurrentFile();
-    setStatus("Compiling LaTeX...");
-    compilerLog.textContent = "Running LaTeX compiler...";
-    compilerLog.style.display = "block";
-
-    const result = await api(
-      `/api/compile/${encodeURIComponent(currentProject)}/${encodeRelativePath(currentFile)}`,
-      { method: "POST" }
+    setStatus(force ? "Compiling LaTeX despite preflight blockers..." : "Checking and compiling LaTeX...");
+    hideRawCompilerLog();
+    const data = await api(
+      `/api/compile/${encodeURIComponent(currentProject)}/${encodeRelativePath(target)}`,
+      { method: "POST", body: JSON.stringify({ force }) }
     );
-
-    markdownPreview.style.display = "none";
-    compilerLog.style.display = "none";
-    pdfPreview.src = `${result.pdf_url}?t=${Date.now()}`;
+    lastCompilerLog = data.log || "";
+    const warnings = (data.diagnostics || []).filter(item => item.severity === "warning");
+    if (warnings.length) {
+      renderBuildDiagnostics(warnings, {
+        title: "Build succeeded with warnings",
+        summary: `${warnings.length} warning${warnings.length === 1 ? "" : "s"}`,
+      });
+    } else {
+      clearBuildDiagnostics();
+    }
+    pdfPreview.src = `${data.pdf_url}?t=${Date.now()}`;
     pdfPreview.style.display = "block";
-    setStatus("Compilation succeeded.");
+    markdownPreview.style.display = "none";
+    setStatus("LaTeX compilation succeeded.");
   } catch (error) {
+    const payload = error.payload || {};
+    lastCompilerLog = payload.log || "";
+    const diagnostics = payload.diagnostics || payload.preflight?.diagnostics || [];
+    const preflightBlocked = Boolean(payload.preflight && payload.preflight.ok === false && !force);
+    renderBuildDiagnostics(diagnostics.length ? diagnostics : [{
+      severity: "error",
+      code: "build-failed",
+      message: error.message,
+      suggestion: "Open the raw build log for compiler details.",
+    }], {
+      title: preflightBlocked ? "Preflight found blockers" : "Build failed",
+      summary: diagnosticSummary(diagnostics),
+      allowForce: preflightBlocked,
+    });
     pdfPreview.style.display = "none";
     markdownPreview.style.display = "none";
-    compilerLog.textContent =
-      error.payload?.log || error.payload?.message || error.message;
-    compilerLog.style.display = "block";
-    setStatus(`Compilation failed: ${error.message}`);
-    console.error("LaTeX compilation failed:", error.payload || error);
+    setStatus(preflightBlocked ? "Fix the LaTeX preflight blockers or choose Build anyway." : `Compilation failed: ${error.message}`);
+    console.error("LaTeX compilation failed:", payload || error);
   } finally {
     compileButton.disabled = false;
     compileButton.textContent = "Compile LaTeX";
@@ -2992,7 +3341,49 @@ document.getElementById("saveBtn")
     saveCurrentFile().catch(error => setStatus(error.message)));
 
 document.getElementById("compileBtn")
-  .addEventListener("click", compileCurrentFile);
+  .addEventListener("click", () => compileCurrentFile(false));
+
+document.getElementById("attachProjectBtn")
+  ?.addEventListener("click", openAttachProjectDialog);
+document.getElementById("projectContextBtn")
+  ?.addEventListener("click", openProjectContextDialog);
+document.getElementById("newLatexProjectBtn")
+  ?.addEventListener("click", openLatexProjectDialog);
+document.getElementById("saveProjectContextBtn")
+  ?.addEventListener("click", () => saveProjectContext());
+document.getElementById("attachProjectRunBtn")
+  ?.addEventListener("click", () => attachExistingProject());
+document.getElementById("latexProjectCreateBtn")
+  ?.addEventListener("click", () => createLatexProjectFromDialog());
+document.getElementById("useProjectRootBtn")
+  ?.addEventListener("click", () => { documentsRootInput.value = ""; });
+document.getElementById("useCurrentFolderBtn")
+  ?.addEventListener("click", () => { documentsRootInput.value = dirname(currentFile); });
+buildAnywayBtn?.addEventListener("click", () => compileCurrentFile(true));
+toggleRawLogBtn?.addEventListener("click", toggleRawCompilerLog);
+
+document.getElementById("goTopBtn")?.addEventListener("click", () => jumpToLine(1));
+document.getElementById("goBottomBtn")?.addEventListener("click", () => {
+  const lines = Math.max(1, editor.value.split("\n").length);
+  jumpToLine(lines).catch(error => setStatus(error.message));
+});
+document.getElementById("goLineBtn")?.addEventListener("click", () => {
+  const current = Number((cursorStatus.textContent.match(/Ln (\d+)/) || [])[1] || 1);
+  const requested = prompt("Go to line:", String(current));
+  if (!requested) return;
+  const line = Number(requested);
+  if (!Number.isInteger(line) || line < 1) {
+    setStatus("Line number must be a positive integer.");
+    return;
+  }
+  jumpToLine(line).catch(error => setStatus(error.message));
+});
+document.getElementById("prevBuildErrorBtn")?.addEventListener("click", () => {
+  jumpToDiagnostic(activeBuildDiagnosticIndex - 1).catch(error => setStatus(error.message));
+});
+document.getElementById("nextBuildErrorBtn")?.addEventListener("click", () => {
+  jumpToDiagnostic(activeBuildDiagnosticIndex + 1).catch(error => setStatus(error.message));
+});
 
 document.getElementById("printBtn")
   .addEventListener("click", () => window.print());
