@@ -151,14 +151,21 @@ class LatexFrontendContractTests(unittest.TestCase):
         css = (root / "tech_documents" / "web" / "static" / "styles.css").read_text(encoding="utf-8")
 
         for element_id in (
-            "projectContextBtn", "attachProjectBtn", "newLatexProjectBtn",
+            "projectContextBtn", "attachProjectBtn", "changeProjectRootBtn", "newLatexProjectBtn",
             "contextProjectRoot", "contextDocumentsRoot", "contextBuildRoot",
-            "buildDiagnostics", "toggleRawLogBtn", "goTopBtn", "goLineBtn", "goBottomBtn",
+            "buildDiagnostics", "toggleRawLogBtn", "minimizeBuildDiagnosticsBtn", "goTopBtn", "goLineBtn", "goBottomBtn",
         ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn("renderBuildDiagnostics", js)
+        self.assertIn("setBuildDiagnosticsCollapsed", js)
+        self.assertIn("toggleBuildDiagnosticsCollapsed", js)
+        self.assertIn("changeProjectRootFromContext", js)
+        self.assertIn("openAttachProjectDialog(true)", js)
+        self.assertIn("New Project Root selected", js)
+        self.assertIn(".workbench-path-control", css)
         self.assertIn("compileCurrentFile(force = false)", js)
         self.assertIn(".editor-statusbar", css)
+        self.assertIn(".build-diagnostics.collapsed", css)
         self.assertIn("overflow: hidden", css)
 
 

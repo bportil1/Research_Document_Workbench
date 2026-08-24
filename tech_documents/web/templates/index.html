@@ -162,6 +162,7 @@
               <div class="build-diagnostics-actions">
                 <button id="buildAnywayBtn" type="button" hidden>Build anyway</button>
                 <button id="toggleRawLogBtn" type="button">Show raw log</button>
+                <button id="minimizeBuildDiagnosticsBtn" type="button" aria-expanded="true" aria-controls="buildDiagnosticsList">Minimize</button>
               </div>
             </div>
             <div id="buildDiagnosticsList" class="build-diagnostics-list"></div>
@@ -200,8 +201,11 @@
         <button value="cancel" aria-label="Close directory context">×</button>
       </div>
       <label class="workbench-field">
-        <span>Project root</span>
-        <input id="projectRootDisplay" type="text" readonly>
+        <span>Project Root <small>(selected project; protected from direct editing)</small></span>
+        <div class="workbench-path-control">
+          <input id="projectRootDisplay" type="text" readonly>
+          <button id="changeProjectRootBtn" type="button">Change / attach…</button>
+        </div>
       </label>
       <label class="workbench-field">
         <span>Documents Root (relative to project root)</span>

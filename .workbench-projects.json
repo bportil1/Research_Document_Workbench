@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "HSQA_DBN": {
+      "documents_root": "",
+      "linked": true,
+      "main_tex": "",
+      "path": "/home/bryanportillo_lt2/Documents/venv/HSQA_DBN"
+    },
+    "Research_Document_Workbench": {
+      "documents_root": "",
+      "linked": true,
+      "main_tex": "",
+      "path": "/home/bryanportillo_lt2/Documents/venv/Research_Document_Workbench"
+    }
+  },
+  "version": 1
+}

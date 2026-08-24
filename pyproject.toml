@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-document-workbench"
-version = "0.6.0"
+version = "0.6.2"
 description = "Standalone technical document workbench with a reusable document/diagram engine"
 requires-python = ">=3.10"
 

@@ -11,6 +11,7 @@ const buildDiagnostics = document.getElementById("buildDiagnostics");
 const buildDiagnosticsTitle = document.getElementById("buildDiagnosticsTitle");
 const buildDiagnosticsSummary = document.getElementById("buildDiagnosticsSummary");
 const buildDiagnosticsList = document.getElementById("buildDiagnosticsList");
+const minimizeBuildDiagnosticsBtn = document.getElementById("minimizeBuildDiagnosticsBtn");
 const buildAnywayBtn = document.getElementById("buildAnywayBtn");
 const toggleRawLogBtn = document.getElementById("toggleRawLogBtn");
 const contextProjectRoot = document.getElementById("contextProjectRoot");
@@ -2923,11 +2924,21 @@ async function saveProjectContext() {
   }
 }
 
-function openAttachProjectDialog() {
+let reopenProjectContextAfterAttach = false;
+
+function openAttachProjectDialog(returnToContext = false) {
+  reopenProjectContextAfterAttach = Boolean(returnToContext);
   attachProjectPath.value = "";
   attachProjectName.value = "";
-  attachProjectMessage.textContent = "The folder is opened in place; it is not copied into Workbench.";
+  attachProjectMessage.textContent = returnToContext
+    ? "Choose the new Project Root. After attaching it, Directory Context will reopen so you can set Documents Root and Main LaTeX."
+    : "The folder is opened in place; it is not copied into Workbench.";
   attachProjectDialog.showModal();
+}
+
+function changeProjectRootFromContext() {
+  projectContextDialog.close();
+  openAttachProjectDialog(true);
 }
 
 async function attachExistingProject() {
@@ -2937,9 +2948,16 @@ async function attachExistingProject() {
       method: "POST",
       body: JSON.stringify({ path: attachProjectPath.value.trim(), name: attachProjectName.value.trim() }),
     });
+    const returnToContext = reopenProjectContextAfterAttach;
+    reopenProjectContextAfterAttach = false;
     attachProjectDialog.close();
     await loadProjects(data.project);
     setStatus(`Attached ${data.context.project_root}`);
+    if (returnToContext) {
+      openProjectContextDialog();
+      projectContextMessage.textContent =
+        "New Project Root selected. Set Documents Root (for example, overleaf) and Main LaTeX, then save context.";
+    }
   } catch (error) {
     attachProjectMessage.textContent = error.message;
   }
@@ -2997,11 +3015,27 @@ function diagnosticSummary(diagnostics) {
 function clearBuildDiagnostics() {
   activeBuildDiagnostics = [];
   activeBuildDiagnosticIndex = -1;
+  setBuildDiagnosticsCollapsed(false);
   buildDiagnostics.hidden = true;
   buildDiagnosticsList.innerHTML = "";
   buildAnywayBtn.hidden = true;
   document.getElementById("prevBuildErrorBtn").disabled = true;
   document.getElementById("nextBuildErrorBtn").disabled = true;
+}
+
+
+function setBuildDiagnosticsCollapsed(collapsed) {
+  const shouldCollapse = Boolean(collapsed);
+  buildDiagnostics.classList.toggle("collapsed", shouldCollapse);
+  if (minimizeBuildDiagnosticsBtn) {
+    minimizeBuildDiagnosticsBtn.textContent = shouldCollapse ? "Expand" : "Minimize";
+    minimizeBuildDiagnosticsBtn.setAttribute("aria-expanded", shouldCollapse ? "false" : "true");
+  }
+  if (shouldCollapse) hideRawCompilerLog();
+}
+
+function toggleBuildDiagnosticsCollapsed() {
+  setBuildDiagnosticsCollapsed(!buildDiagnostics.classList.contains("collapsed"));
 }
 
 function hideRawCompilerLog() {
@@ -3087,6 +3121,7 @@ function renderBuildDiagnostics(diagnostics, options = {}) {
   activeBuildDiagnostics = [...(diagnostics || [])];
   activeBuildDiagnosticIndex = activeBuildDiagnostics.length ? 0 : -1;
   buildDiagnostics.hidden = false;
+  setBuildDiagnosticsCollapsed(false);
   buildDiagnosticsTitle.textContent = options.title || "LaTeX diagnostics";
   buildDiagnosticsSummary.textContent = options.summary || diagnosticSummary(activeBuildDiagnostics);
   buildAnywayBtn.hidden = !options.allowForce;
@@ -3344,15 +3379,23 @@ document.getElementById("compileBtn")
   .addEventListener("click", () => compileCurrentFile(false));
 
 document.getElementById("attachProjectBtn")
-  ?.addEventListener("click", openAttachProjectDialog);
+  ?.addEventListener("click", () => openAttachProjectDialog(false));
 document.getElementById("projectContextBtn")
   ?.addEventListener("click", openProjectContextDialog);
+document.getElementById("changeProjectRootBtn")
+  ?.addEventListener("click", changeProjectRootFromContext);
 document.getElementById("newLatexProjectBtn")
   ?.addEventListener("click", openLatexProjectDialog);
 document.getElementById("saveProjectContextBtn")
   ?.addEventListener("click", () => saveProjectContext());
 document.getElementById("attachProjectRunBtn")
   ?.addEventListener("click", () => attachExistingProject());
+
+attachProjectDialog?.addEventListener("close", () => {
+  if (attachProjectDialog.returnValue === "cancel") {
+    reopenProjectContextAfterAttach = false;
+  }
+});
 document.getElementById("latexProjectCreateBtn")
   ?.addEventListener("click", () => createLatexProjectFromDialog());
 document.getElementById("useProjectRootBtn")
@@ -3361,6 +3404,7 @@ document.getElementById("useCurrentFolderBtn")
   ?.addEventListener("click", () => { documentsRootInput.value = dirname(currentFile); });
 buildAnywayBtn?.addEventListener("click", () => compileCurrentFile(true));
 toggleRawLogBtn?.addEventListener("click", toggleRawCompilerLog);
+minimizeBuildDiagnosticsBtn?.addEventListener("click", toggleBuildDiagnosticsCollapsed);
 
 document.getElementById("goTopBtn")?.addEventListener("click", () => jumpToLine(1));
 document.getElementById("goBottomBtn")?.addEventListener("click", () => {

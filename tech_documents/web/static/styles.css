@@ -1441,6 +1441,15 @@ body {
   color: var(--text);
 }
 
+.build-diagnostics.collapsed {
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.build-diagnostics.collapsed .build-diagnostics-list {
+  display: none;
+}
+
 .build-diagnostics-header {
   position: sticky;
   top: 0;
@@ -1569,6 +1578,22 @@ body {
   background: var(--panel);
   color: var(--text);
   border-radius: 4px;
+}
+
+.workbench-field small {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.workbench-path-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+}
+
+.workbench-path-control input[readonly] {
+  opacity: 0.82;
 }
 
 .workbench-check {
