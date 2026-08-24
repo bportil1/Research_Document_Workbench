@@ -829,14 +829,83 @@ class DocumentEngine:
     # LaTeX compilation
     # ------------------------------------------------------------------
     def compile_latex(self, project: str, filename: str, *, force: bool = False) -> CompilationResult:
+        """Compile a LaTeX file from a managed or attached Workbench project."""
         source_file = self.editable_file_path(project, filename)
-        if source_file.suffix.lower() != ".tex":
-            raise UnsupportedFileTypeError("Only .tex files can be compiled.")
-        if not source_file.exists():
-            raise ItemNotFoundError("LaTeX source does not exist.")
-
         project_path = self.project_path(project).resolve()
         documents_root = self.documents_root_path(project).resolve()
+        return self._compile_latex_source(
+            project_path=project_path,
+            documents_root=documents_root,
+            source_file=source_file,
+            builds_dir=self.builds_dir,
+            force=force,
+        )
+
+    def compile_latex_path(
+        self,
+        project_root: str | Path,
+        filename: str,
+        *,
+        builds_dir: str | Path | None = None,
+        force: bool = False,
+    ) -> CompilationResult:
+        """Compile ``filename`` from an arbitrary local project root.
+
+        This is the stable host-facing compatibility entry point used by PAH and
+        other callers that already own their workspace.  The caller does not need
+        to register the directory as a Workbench project.  The complete supplied
+        root is treated as the Documents Root, copied into the isolated build
+        workspace, and processed through the same preflight/diagnostic pipeline as
+        standalone Workbench builds.
+        """
+        project_path = Path(project_root).expanduser().resolve()
+        if not project_path.exists() or not project_path.is_dir():
+            raise ItemNotFoundError("Project root does not exist.")
+
+        relative = Path(str(filename))
+        source_file = relative.expanduser().resolve() if relative.is_absolute() else (project_path / relative).resolve()
+        try:
+            source_file.relative_to(project_path)
+        except ValueError as exc:
+            raise InvalidPathError("LaTeX source escapes the project root.") from exc
+
+        target_builds = Path(builds_dir).expanduser().resolve() if builds_dir is not None else self.builds_dir
+        return self._compile_latex_source(
+            project_path=project_path,
+            documents_root=project_path,
+            source_file=source_file,
+            builds_dir=target_builds,
+            force=force,
+        )
+
+    def _compile_latex_source(
+        self,
+        *,
+        project_path: Path,
+        documents_root: Path,
+        source_file: Path,
+        builds_dir: Path,
+        force: bool,
+    ) -> CompilationResult:
+        source_file = source_file.resolve()
+        project_path = project_path.resolve()
+        documents_root = documents_root.resolve()
+        builds_dir = builds_dir.resolve()
+
+        if source_file.suffix.lower() != ".tex":
+            raise UnsupportedFileTypeError("Only .tex files can be compiled.")
+        if not source_file.exists() or not source_file.is_file():
+            raise ItemNotFoundError("LaTeX source does not exist.")
+
+        try:
+            source_file.relative_to(project_path)
+        except ValueError as exc:
+            raise InvalidPathError("LaTeX source escapes the project root.") from exc
+        try:
+            relative_source = source_file.relative_to(documents_root)
+        except ValueError as exc:
+            raise InvalidPathError("LaTeX source must be inside the configured Documents Root.") from exc
+
         preflight = preflight_latex(source_file, project_root=project_path, documents_root=documents_root)
         preflight_payload = preflight.to_dict()
         if preflight.blockers and not force:
@@ -848,13 +917,9 @@ class DocumentEngine:
                 preflight=preflight_payload,
             )
 
-        try:
-            relative_source = source_file.resolve().relative_to(documents_root)
-        except ValueError as exc:
-            raise InvalidPathError("LaTeX source must be inside the configured Documents Root.") from exc
-
         build_id = uuid.uuid4().hex
-        source_dir, output_dir = prepare_build_workspace(documents_root, self.builds_dir, build_id)
+        builds_dir.mkdir(parents=True, exist_ok=True)
+        source_dir, output_dir = prepare_build_workspace(documents_root, builds_dir, build_id)
         build_source_file = source_dir / relative_source
 
         compiler = None

@@ -118,6 +118,29 @@ class LatexDirectoryContextTests(unittest.TestCase):
             result = self.engine.compile_latex(name, "overleaf/main.tex")
         self.assertTrue(result.ok)
 
+    @mock.patch("tech_documents.latex_tools._kpsewhich", return_value=True)
+    @mock.patch("tech_documents.api.shutil.which", side_effect=lambda name: "/usr/bin/latexmk" if name == "latexmk" else None)
+    def test_compile_latex_path_preserves_host_facing_api(self, _which, _kpsewhich):
+        repo = Path(self.temp.name) / "host-owned-repo"
+        repo.mkdir()
+        (repo / "paper.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}host\\end{document}\n",
+            encoding="utf-8",
+        )
+        external_builds = Path(self.temp.name) / "host-builds"
+
+        def fake_compile(source_file: Path, output_dir: Path):
+            self.assertEqual(source_file, source_file.parent / "paper.tex")
+            self.assertEqual(source_file.parent.name, "source")
+            self.assertEqual(output_dir.parent.parent, external_builds)
+            (output_dir / "paper.pdf").write_bytes(b"%PDF-fake")
+            return subprocess.CompletedProcess(["latexmk"], 0, stdout="ok", stderr="")
+
+        with mock.patch("tech_documents.api.compile_with_latexmk", side_effect=fake_compile):
+            result = self.engine.compile_latex_path(repo, "paper.tex", builds_dir=external_builds)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status_code, 200)
+
 
 class LatexDiagnosticParserTests(unittest.TestCase):
     def test_bibtex_primary_error_demotes_undefined_citations(self):

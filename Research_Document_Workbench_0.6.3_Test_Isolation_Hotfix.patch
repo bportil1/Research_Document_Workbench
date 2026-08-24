@@ -1,0 +1,36 @@
+diff --git a/tests/test_document_engine.py b/tests/test_document_engine.py
+index 0a0071f..8beeb9d 100644
+--- a/tests/test_document_engine.py
++++ b/tests/test_document_engine.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import io
+ import shutil
++import subprocess
+ import sys
+ import tempfile
+ from pathlib import Path
+@@ -135,7 +136,22 @@ class DocumentEngineTests(unittest.TestCase):
+         self.assertTrue(result.pdf_path.exists())
+ 
+     def test_core_import_does_not_load_flask(self):
+-        self.assertNotIn("flask", sys.modules)
++        probe = subprocess.run(
++            [
++                sys.executable,
++                "-c",
++                (
++                    "import sys; "
++                    "import tech_documents; "
++                    "raise SystemExit(1 if 'flask' in sys.modules else 0)"
++                ),
++            ],
++            cwd=Path(__file__).resolve().parents[1],
++            text=True,
++            capture_output=True,
++            check=False,
++        )
++        self.assertEqual(probe.returncode, 0, probe.stderr or probe.stdout)
+ 
+ 
+ if __name__ == "__main__":
