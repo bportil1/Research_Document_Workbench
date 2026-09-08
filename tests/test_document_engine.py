@@ -79,6 +79,15 @@ class DocumentEngineTests(unittest.TestCase):
         self.assertIn("flowchart LR", parsed["mermaid"])
         self.assertEqual(parsed["graph"]["preset"], "research")
 
+        grouped = self.engine.parse_diagram(
+            "group Analysis Lab\n  Analyzer [service]\nend\n"
+        )
+        self.assertEqual(
+            grouped["graph"]["groups"],
+            [{"label": "Analysis Lab", "members": ["Analyzer"]}],
+        )
+        self.assertIn('subgraph g1["Analysis Lab"]', grouped["mermaid"])
+
         asset = self.engine.save_diagram_asset(
             project,
             "figures/architecture.svg",

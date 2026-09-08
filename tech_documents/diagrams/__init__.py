@@ -2,6 +2,7 @@ from .assets import FigureInsertion, insert_figure_reference, relative_asset_pat
 from .format import (
     DiagramDocument,
     DiagramEdge,
+    DiagramGroup,
     DiagramNode,
     DiagramSyntaxError,
     VALID_DIRECTIONS,
@@ -14,6 +15,7 @@ from .format import (
 __all__ = [
     "DiagramDocument",
     "DiagramEdge",
+    "DiagramGroup",
     "DiagramNode",
     "DiagramSyntaxError",
     "FigureInsertion",

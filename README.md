@@ -250,6 +250,18 @@ The same node label can be referenced multiple times; those references resolve t
 Source [service] -> Target [database]
 ```
 
+Architecture diagrams can place nodes inside visual groups. Groups are written as explicit blocks and are emitted as Mermaid subgraphs:
+
+```text
+group Code Analysis Lab
+  Code Analyzer [service]
+  pyPIQUE [service]
+  EBM / DBN Analysis Lab [service]
+end
+```
+
+Groups are ordered visually in source order. Nested groups are intentionally not supported, and one graph node can belong to at most one group because Mermaid cannot place the same node instance inside two subgraphs. If the same underlying module must appear in two collection views, give the two visual instances distinct labels or keep the shared module outside the groups. Edges may connect nodes across group boundaries.
+
 Lines beginning with `//` are comments. Current type names are free-form identifiers such as `interface`, `service`, `database`, `hardware`, and `custom`. Types are stored as node metadata; visual style presets are intentionally left for the Diagram Builder step.
 
 Example:
@@ -291,6 +303,7 @@ Open any `.diagram` file and click **Diagram Builder** in the editor toolbar. Th
 The builder currently automates the presentation work that normally makes hand-written Mermaid diagrams tedious:
 
 - automatic graph layout from the `.diagram` node/edge source;
+- visual `group ... end` containers that compile to Mermaid subgraphs;
 - **Top → Bottom**, **Left → Right**, **Bottom → Top**, and **Right → Left** orientations;
 - deterministic style presets for **Architecture**, **Research**, **Pipeline**, and **Minimal** diagrams;
 - semantic shapes and colors for `interface`, `service`, `database`, `hardware`, and `custom` nodes;

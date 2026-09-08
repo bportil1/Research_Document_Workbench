@@ -879,7 +879,9 @@ async function renderDiagramPreviewNow(generation) {
     markdownPreview.innerHTML = "";
     const summary = document.createElement("div");
     summary.className = "diagram-summary";
-    summary.textContent = `${result.graph.nodes.length} nodes · ${result.graph.edges.length} edges`;
+    const groupCount = result.graph.groups?.length || 0;
+    summary.textContent = `${result.graph.nodes.length} nodes · ${result.graph.edges.length} edges` +
+      (groupCount ? ` · ${groupCount} groups` : "");
     markdownPreview.appendChild(summary);
 
     const wrapper = document.createElement("div");
@@ -946,8 +948,10 @@ async function renderDiagramBuilderNow(generation) {
     wrapper.innerHTML = rendered.svg;
     diagramBuilderPreview.appendChild(wrapper);
 
+    const groupCount = result.graph.groups?.length || 0;
     diagramBuilderStats.textContent =
-      `${result.graph.nodes.length} nodes · ${result.graph.edges.length} edges`;
+      `${result.graph.nodes.length} nodes · ${result.graph.edges.length} edges` +
+      (groupCount ? ` · ${groupCount} groups` : "");
     diagramBuilderNormalizedSource = result.normalized_source;
     diagramBuilderApplyBtn.disabled = false;
     renderDiagramBuilderErrors([]);

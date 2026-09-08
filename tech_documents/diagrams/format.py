@@ -8,6 +8,8 @@ from typing import Any
 
 _NODE_RE = re.compile(r"^(.*?)(?:\s+\[([A-Za-z][A-Za-z0-9_-]*)\])?\s*$")
 _DIRECTIVE_RE = re.compile(r"^@(direction|preset)\s+(.+?)\s*$", re.IGNORECASE)
+_GROUP_START_RE = re.compile(r"^group\s+(.+?)\s*$", re.IGNORECASE)
+_GROUP_END_RE = re.compile(r"^end\s*$", re.IGNORECASE)
 VALID_DIRECTIONS = {"TB", "TD", "BT", "LR", "RL"}
 VALID_PRESETS = {"minimal", "architecture", "research", "pipeline"}
 
@@ -40,9 +42,19 @@ class DiagramEdge:
 
 
 @dataclass
+class DiagramGroup:
+    label: str
+    members: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"label": self.label, "members": list(self.members)}
+
+
+@dataclass
 class DiagramDocument:
     nodes: dict[str, DiagramNode] = field(default_factory=dict)
     edges: list[DiagramEdge] = field(default_factory=list)
+    groups: list[DiagramGroup] = field(default_factory=list)
     direction: str = "TB"
     preset: str = "architecture"
 
@@ -50,6 +62,7 @@ class DiagramDocument:
         return {
             "nodes": [node.to_dict() for node in self.nodes.values()],
             "edges": [edge.to_dict() for edge in self.edges],
+            "groups": [group.to_dict() for group in self.groups],
             "direction": self.direction,
             "preset": self.preset,
         }
@@ -90,6 +103,31 @@ def _merge_node(
         )
 
 
+def _group_for_member(document: DiagramDocument, label: str) -> DiagramGroup | None:
+    for group in document.groups:
+        if label in group.members:
+            return group
+    return None
+
+
+def _add_group_member(
+    document: DiagramDocument,
+    group: DiagramGroup,
+    label: str,
+    line_number: int,
+    errors: list[str],
+) -> None:
+    existing_group = _group_for_member(document, label)
+    if existing_group is not None and existing_group is not group:
+        errors.append(
+            f"Line {line_number}: node {label!r} already belongs to group "
+            f"{existing_group.label!r}; a node can belong to only one group."
+        )
+        return
+    if label not in group.members:
+        group.members.append(label)
+
+
 def _apply_directive(
     document: DiagramDocument,
     name: str,
@@ -127,6 +165,11 @@ def parse_diagram(source: str) -> DiagramDocument:
         @direction TB
         @preset architecture
 
+        group Code Analysis Lab
+          Code Analyzer [service]
+          pyPIQUE [service]
+        end
+
         Source [service]
           -> Target [database]
           :: optional note attached to Source
@@ -135,12 +178,16 @@ def parse_diagram(source: str) -> DiagramDocument:
 
     Blank lines and lines whose first non-space characters are ``//`` are ignored.
     Labels are document-local identifiers: repeating a label refers to the same node.
+    Groups are visual containers and may contain node declarations and edges. Nested
+    groups are intentionally not supported. A node may belong to at most one group.
     """
 
     document = DiagramDocument()
     errors: list[str] = []
     current_label: str | None = None
+    current_group: DiagramGroup | None = None
     seen_edges: set[tuple[str, str]] = set()
+    seen_group_labels: set[str] = set()
 
     for line_number, raw_line in enumerate(source.splitlines(), start=1):
         stripped = raw_line.strip()
@@ -162,6 +209,35 @@ def parse_diagram(source: str) -> DiagramDocument:
                 f"Line {line_number}: unknown diagram directive. "
                 "Supported directives are @direction and @preset."
             )
+            continue
+
+        group_start = _GROUP_START_RE.fullmatch(stripped)
+        if group_start:
+            label = group_start.group(1).strip()
+            if current_group is not None:
+                errors.append(
+                    f"Line {line_number}: nested groups are not supported; "
+                    f"close group {current_group.label!r} with 'end' first."
+                )
+                continue
+            if not label:
+                errors.append(f"Line {line_number}: group label cannot be empty.")
+                continue
+            if label.lower() in {item.lower() for item in seen_group_labels}:
+                errors.append(f"Line {line_number}: duplicate group label {label!r}.")
+                continue
+            current_group = DiagramGroup(label=label)
+            document.groups.append(current_group)
+            seen_group_labels.add(label)
+            current_label = None
+            continue
+
+        if _GROUP_END_RE.fullmatch(stripped):
+            if current_group is None:
+                errors.append(f"Line {line_number}: 'end' does not have an open group.")
+                continue
+            current_group = None
+            current_label = None
             continue
 
         try:
@@ -187,7 +263,12 @@ def parse_diagram(source: str) -> DiagramDocument:
                     continue
                 target_text = stripped[2:].strip()
                 target_label, target_kind = _parse_node_spec(target_text, line_number)
+                target_was_new = target_label not in document.nodes
                 _merge_node(document, target_label, target_kind, line_number, errors)
+                if current_group is not None and target_was_new:
+                    _add_group_member(
+                        document, current_group, target_label, line_number, errors
+                    )
                 edge_key = (current_label, target_label)
                 if edge_key not in seen_edges:
                     document.edges.append(DiagramEdge(*edge_key))
@@ -198,8 +279,19 @@ def parse_diagram(source: str) -> DiagramDocument:
                 source_text, target_text = stripped.split("->", 1)
                 source_label, source_kind = _parse_node_spec(source_text, line_number)
                 target_label, target_kind = _parse_node_spec(target_text, line_number)
+                source_was_new = source_label not in document.nodes
+                target_was_new = target_label not in document.nodes
                 _merge_node(document, source_label, source_kind, line_number, errors)
                 _merge_node(document, target_label, target_kind, line_number, errors)
+                if current_group is not None:
+                    if source_was_new:
+                        _add_group_member(
+                            document, current_group, source_label, line_number, errors
+                        )
+                    if target_was_new:
+                        _add_group_member(
+                            document, current_group, target_label, line_number, errors
+                        )
                 edge_key = (source_label, target_label)
                 if edge_key not in seen_edges:
                     document.edges.append(DiagramEdge(*edge_key))
@@ -209,9 +301,14 @@ def parse_diagram(source: str) -> DiagramDocument:
 
             label, kind = _parse_node_spec(stripped, line_number)
             _merge_node(document, label, kind, line_number, errors)
+            if current_group is not None:
+                _add_group_member(document, current_group, label, line_number, errors)
             current_label = label
         except DiagramSyntaxError as exc:
             errors.extend(exc.errors)
+
+    if current_group is not None:
+        errors.append(f"Unclosed group {current_group.label!r}; add 'end'.")
 
     if not document.nodes and not errors:
         errors.append("Diagram is empty. Add at least one node.")
@@ -221,29 +318,64 @@ def parse_diagram(source: str) -> DiagramDocument:
     return document
 
 
+def _serialized_node_lines(node: DiagramNode) -> list[str]:
+    kind_suffix = f" [{node.kind}]" if node.kind != "default" else ""
+    lines = [f"{node.label}{kind_suffix}"]
+    if node.note:
+        lines.extend(f"  :: {note}" for note in node.note.splitlines() if note.strip())
+    return lines
+
+
 def serialize_diagram(document: DiagramDocument) -> str:
     """Serialize a graph into the canonical, human-editable .diagram form."""
 
-    outgoing: dict[str, list[str]] = {label: [] for label in document.nodes}
-    for edge in document.edges:
-        outgoing.setdefault(edge.source, []).append(edge.target)
+    # Preserve the established compact serialization for documents without groups.
+    if not document.groups:
+        outgoing: dict[str, list[str]] = {label: [] for label in document.nodes}
+        for edge in document.edges:
+            outgoing.setdefault(edge.source, []).append(edge.target)
 
-    blocks: list[str] = [
+        blocks: list[str] = [
+            f"@direction {document.direction}",
+            f"@preset {document.preset}",
+        ]
+        for label, node in document.nodes.items():
+            lines = _serialized_node_lines(node)
+            for target in outgoing.get(label, []):
+                target_node = document.nodes[target]
+                target_kind = (
+                    f" [{target_node.kind}]" if target_node.kind != "default" else ""
+                )
+                lines.append(f"  -> {target}{target_kind}")
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks).rstrip() + "\n"
+
+    # Grouped documents serialize declarations first and edges afterward. Keeping
+    # cross-group edges outside group blocks prevents a target reference from
+    # accidentally acquiring the source group's membership during a round trip.
+    blocks = [
         f"@direction {document.direction}",
         f"@preset {document.preset}",
     ]
-    for label, node in document.nodes.items():
-        kind_suffix = f" [{node.kind}]" if node.kind != "default" else ""
-        lines = [f"{label}{kind_suffix}"]
-        if node.note:
-            lines.extend(f"  :: {note}" for note in node.note.splitlines() if note.strip())
-        for target in outgoing.get(label, []):
-            target_node = document.nodes[target]
-            target_kind = (
-                f" [{target_node.kind}]" if target_node.kind != "default" else ""
-            )
-            lines.append(f"  -> {target}{target_kind}")
+    grouped_members: set[str] = set()
+    for group in document.groups:
+        lines = [f"group {group.label}"]
+        for label in group.members:
+            node = document.nodes.get(label)
+            if node is None:
+                continue
+            grouped_members.add(label)
+            lines.extend(f"  {line}" for line in _serialized_node_lines(node))
+        lines.append("end")
         blocks.append("\n".join(lines))
+
+    for label, node in document.nodes.items():
+        if label not in grouped_members:
+            blocks.append("\n".join(_serialized_node_lines(node)))
+
+    if document.edges:
+        edge_lines = [f"{edge.source} -> {edge.target}" for edge in document.edges]
+        blocks.append("\n".join(edge_lines))
 
     return "\n\n".join(blocks).rstrip() + "\n"
 
@@ -327,13 +459,39 @@ def diagram_to_mermaid(
     node_ids = {label: f"n{index}" for index, label in enumerate(document.nodes, 1)}
     lines = [f"flowchart {direction}"]
 
-    for label, node in document.nodes.items():
+    def node_line(label: str, indent: str = "  ") -> str:
+        node = document.nodes[label]
         node_id = node_ids[label]
         display = html.escape(label, quote=True)
         if node.note:
-            note = "<br/>".join(html.escape(part, quote=True) for part in node.note.splitlines())
+            note = "<br/>".join(
+                html.escape(part, quote=True) for part in node.note.splitlines()
+            )
             display = f"{display}<br/>{note}"
-        lines.append(f"  {_node_shape(node_id, display, node.kind)}")
+        return f"{indent}{_node_shape(node_id, display, node.kind)}"
+
+    grouped_members: set[str] = set()
+    for index, group in enumerate(document.groups, start=1):
+        group_id = f"g{index}"
+        group_label = html.escape(group.label, quote=True)
+        lines.append(f'  subgraph {group_id}["{group_label}"]')
+        lines.append(f"    direction {direction}")
+        for label in group.members:
+            if label not in document.nodes:
+                continue
+            grouped_members.add(label)
+            lines.append(node_line(label, indent="    "))
+        lines.append("  end")
+
+    # Keep visual groups in source order without adding semantic graph edges.
+    # This gives architecture diagrams deterministic top-to-bottom (or left-to-right)
+    # group placement while leaving the parsed node/edge graph unchanged.
+    for index in range(1, len(document.groups)):
+        lines.append(f"  g{index} ~~~ g{index + 1}")
+
+    for label in document.nodes:
+        if label not in grouped_members:
+            lines.append(node_line(label))
 
     for edge in document.edges:
         lines.append(f"  {node_ids[edge.source]} --> {node_ids[edge.target]}")
