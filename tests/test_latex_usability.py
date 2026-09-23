@@ -321,6 +321,13 @@ class LatexFrontendContractTests(unittest.TestCase):
         self.assertIn(".editor-statusbar", css)
         self.assertIn(".build-diagnostics.collapsed", css)
         self.assertIn("overflow: hidden", css)
+        self.assertIn('title="Save (Ctrl+S / Cmd+S)"', html)
+        self.assertIn("function handleDocumentSaveShortcut(event)", js)
+        self.assertIn("event.ctrlKey || event.metaKey", js)
+        self.assertIn("event.defaultPrevented || !currentProject || !currentFile", js)
+        self.assertIn("if (!event.repeat)", js)
+        self.assertIn("saveCurrentFile().catch", js)
+        self.assertIn("if (handleDocumentSaveShortcut(event)) return;", js)
 
 
 if __name__ == "__main__":

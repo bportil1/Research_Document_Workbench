@@ -4110,11 +4110,6 @@ editor.addEventListener("keydown", event => {
     redoEditor();
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-    event.preventDefault();
-    saveCurrentFile().catch(error => setStatus(error.message));
-  }
-
   if (event.key === "Tab") {
     event.preventDefault();
     editor.setRangeText(
@@ -4395,12 +4390,19 @@ diagramBuilderModal?.addEventListener("click", event => {
   if (event.target === diagramBuilderModal) closeDiagramBuilder();
 });
 
-document.addEventListener("keydown", event => {
-  if (!notebookWorkspace.hidden && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-    event.preventDefault();
-    saveCurrentNotebook().catch(error => setStatus(error.message));
-    return;
+function handleDocumentSaveShortcut(event) {
+  const modifier = event.ctrlKey || event.metaKey;
+  if (!modifier || event.altKey || event.shiftKey || event.key.toLowerCase() !== "s") return false;
+  if (event.defaultPrevented || !currentProject || !currentFile) return false;
+  event.preventDefault();
+  if (!event.repeat) {
+    saveCurrentFile().catch(error => setStatus(`Save failed: ${error.message}`));
   }
+  return true;
+}
+
+document.addEventListener("keydown", event => {
+  if (handleDocumentSaveShortcut(event)) return;
   if (event.key === "Escape" && diagramBuilderModal && !diagramBuilderModal.hidden) {
     event.preventDefault();
     closeDiagramBuilder();

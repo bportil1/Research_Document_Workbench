@@ -228,6 +228,7 @@ Folder deletion is recursive and always asks for confirmation in the browser.
 
 The text editor keeps an explicit per-file edit history rather than relying only on the browser textarea history.
 
+- **Ctrl+S** / **Cmd+S**: save the currently open document from anywhere in the Workbench window
 - **Ctrl+Z** / **Cmd+Z**: undo
 - **Ctrl+Shift+Z** / **Cmd+Shift+Z**: redo
 - **Ctrl+Y**: redo
