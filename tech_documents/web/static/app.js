@@ -116,6 +116,18 @@ const FILES_COLLAPSED_STORAGE_KEY = "rdw.ui.filesCollapsed.v1";
 const FORMATTING_COLLAPSED_STORAGE_KEY = "rdw.ui.formattingCollapsed.v1";
 const LIVE_PREVIEW_STORAGE_KEY = "rdw.ui.livePreview.v1";
 const VIEW_MODE_STORAGE_KEY = "rdw.ui.viewMode.v1";
+const DOCUMENT_SESSION_CHANNEL_NAME = "rdw.document-session.v1";
+const DOCUMENT_SESSION_PROTOCOL_VERSION = 1;
+const documentSessionInstanceId = (() => {
+  try {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  } catch (_error) {
+    // Fall through to a local identifier when crypto APIs are unavailable.
+  }
+  return `rdw-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+})();
+let documentSessionChannel = null;
+let activeEditorOwner = "";
 let searchMatches = [];
 let searchIndex = -1;
 let activeBuildDiagnostics = [];
@@ -343,6 +355,172 @@ function sameOriginPreviewUrl(value) {
     return `${candidate.pathname}${candidate.search}${candidate.hash}`;
   } catch (_error) {
     return "";
+  }
+}
+
+function documentSessionMatches(project, file) {
+  return Boolean(project && file && currentProject === project && currentFile === file);
+}
+
+function resetDocumentEditorOwnership() {
+  activeEditorOwner = "";
+  editor.readOnly = false;
+}
+
+function claimDocumentEditor() {
+  if (!currentProject || !currentFile || isNotebookPath(currentFile)) return false;
+  activeEditorOwner = documentSessionInstanceId;
+  editor.readOnly = false;
+  postDocumentSessionEvent("editor-claimed");
+  return true;
+}
+
+function applyRemoteEditorClaim(message) {
+  activeEditorOwner = message.source;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = null;
+  editor.readOnly = true;
+  setStatus(
+    dirty
+      ? "Editing moved to another window; local unsaved edits are preserved here. Focus this editor to take control."
+      : "Editing is active in another Workbench window. Focus this editor to take control."
+  );
+}
+
+function applyRemoteEditorRelease(message) {
+  if (activeEditorOwner !== message.source) return;
+  resetDocumentEditorOwnership();
+  setStatus("Editing is available in this Workbench window.");
+}
+
+function postDocumentSessionEvent(type, payload = {}, context = {}) {
+  const project = context.project || currentProject;
+  const file = context.file || currentFile;
+  if (!documentSessionChannel || !project || !file || isNotebookPath(file)) return false;
+  documentSessionChannel.postMessage({
+    protocol: DOCUMENT_SESSION_PROTOCOL_VERSION,
+    type,
+    source: documentSessionInstanceId,
+    project,
+    file,
+    timestamp: Date.now(),
+    ...payload,
+  });
+  return true;
+}
+
+function markRemoteSourceDirty() {
+  editorRevision += 1;
+  if (hasCompiledPdfForCurrentProject()) {
+    compiledPreview.stale = true;
+    updatePdfPreviewState();
+  }
+  setStatus(
+    dirty
+      ? "This document has unsaved changes in multiple Workbench windows."
+      : "Unsaved changes are being edited in another Workbench window."
+  );
+}
+
+function applyRemoteSavedSource(message) {
+  if (dirty) {
+    setStatus("Saved in another Workbench window; local unsaved edits were kept.");
+    return;
+  }
+  if (typeof message.content !== "string") {
+    setStatus("Document saved in another Workbench window.");
+    return;
+  }
+
+  const changed = editor.value !== message.content;
+  if (changed) {
+    editor.value = message.content;
+    editorRevision += 1;
+    initializeEditorHistory(message.content);
+    updatePreview({ contentChanged: true });
+    updateCursorStatus();
+    findMatches();
+    updateDiagramBuilderAvailability();
+  }
+  dirty = false;
+  setStatus(`Synchronized saved changes for ${currentFile}`);
+}
+
+function applyRemoteCompileSuccess(message) {
+  const safeUrl = sameOriginPreviewUrl(message.pdfUrl);
+  if (!safeUrl) return;
+  compiledPreview = {
+    project: message.project,
+    target: message.target || message.file,
+    url: safeUrl,
+    stale: Boolean(message.stale || dirty),
+  };
+  refreshCompiledPdfPreview(safeUrl);
+  showCompiledPdfPreview({ stale: compiledPreview.stale });
+  setStatus(
+    compiledPreview.stale
+      ? "PDF synchronized from another window, but this window has newer edits."
+      : "PDF synchronized from another Workbench window."
+  );
+}
+
+async function handleDocumentSessionMessage(event) {
+  const message = event?.data;
+  if (!message || typeof message !== "object") return;
+  if (message.protocol !== DOCUMENT_SESSION_PROTOCOL_VERSION) return;
+  if (!message.type || message.source === documentSessionInstanceId) return;
+  if (!documentSessionMatches(message.project, message.file)) return;
+
+  if (message.type === "editor-claimed") {
+    applyRemoteEditorClaim(message);
+    return;
+  }
+  if (message.type === "editor-released") {
+    applyRemoteEditorRelease(message);
+    return;
+  }
+  if (message.type === "source-dirty") {
+    markRemoteSourceDirty();
+    return;
+  }
+  if (message.type === "source-saved") {
+    applyRemoteSavedSource(message);
+    return;
+  }
+  if (message.type === "compile-started") {
+    setStatus("LaTeX compilation started in another Workbench window…");
+    return;
+  }
+  if (message.type === "compile-succeeded") {
+    applyRemoteCompileSuccess(message);
+    return;
+  }
+  if (message.type === "compile-failed") {
+    if (hasCompiledPdfForCurrentProject()) updatePdfPreviewState();
+    setStatus(`Compilation failed in another Workbench window: ${message.error || "unknown error"}`);
+  }
+}
+
+function initializeDocumentSessionSync() {
+  if (!("BroadcastChannel" in window)) return false;
+  try {
+    documentSessionChannel = new BroadcastChannel(DOCUMENT_SESSION_CHANNEL_NAME);
+    documentSessionChannel.addEventListener("message", event => {
+      handleDocumentSessionMessage(event).catch(error =>
+        console.error("Document session synchronization failed:", error));
+    });
+    window.addEventListener("pagehide", () => {
+      if (activeEditorOwner === documentSessionInstanceId) {
+        postDocumentSessionEvent("editor-released");
+      }
+      try { documentSessionChannel?.close(); } catch (_error) { /* best effort */ }
+      documentSessionChannel = null;
+    }, { once: true });
+    return true;
+  } catch (error) {
+    console.warn("Document session synchronization is unavailable:", error);
+    documentSessionChannel = null;
+    return false;
   }
 }
 
@@ -1016,6 +1194,7 @@ async function openFile(filename) {
   showTextWorkspace();
   const data = await api(fileApiUrl(filename));
   currentFile = data.filename;
+  resetDocumentEditorOwnership();
   selectedItem = {
     type: "file",
     name: basename(currentFile),
@@ -1041,16 +1220,28 @@ async function saveCurrentFile() {
     await saveCurrentNotebook();
     return;
   }
+  if (activeEditorOwner && activeEditorOwner !== documentSessionInstanceId) {
+    setStatus("Save skipped because another Workbench window owns editing. Focus this editor to take control first.");
+    return;
+  }
   await api(fileApiUrl(currentFile), {
     method: "PUT",
     body: JSON.stringify({ content: editor.value }),
   });
   dirty = false;
+  postDocumentSessionEvent("source-saved", {
+    content: editor.value,
+    revision: editorRevision,
+  });
   setStatus(`Saved ${currentFile} at ${new Date().toLocaleTimeString()}`);
 }
 
 function scheduleAutosave() {
+  const wasDirty = dirty;
   dirty = true;
+  if (!wasDirty) {
+    postDocumentSessionEvent("source-dirty", { revision: editorRevision });
+  }
   setStatus("Unsaved changes");
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
@@ -1874,6 +2065,7 @@ function setView(view, { persist = true } = {}) {
 }
 
 function replaceSelection(before, after = before, placeholder = "") {
+  claimDocumentEditor();
   const start = editor.selectionStart;
   const end = editor.selectionEnd;
   const selected = editor.value.slice(start, end) || placeholder;
@@ -1884,6 +2076,7 @@ function replaceSelection(before, after = before, placeholder = "") {
 }
 
 function insertAtLineStart(prefix) {
+  claimDocumentEditor();
   const start = editor.selectionStart;
   const lineStart = editor.value.lastIndexOf("\n", start - 1) + 1;
   editor.setRangeText(prefix, lineStart, lineStart, "end");
@@ -1892,6 +2085,7 @@ function insertAtLineStart(prefix) {
 }
 
 function insertSnippet(snippet) {
+  claimDocumentEditor();
   const start = editor.selectionStart;
   editor.setRangeText(snippet, start, start, "end");
   editor.focus();
@@ -3694,7 +3888,16 @@ async function compileLatexTarget(target, { force = false, live = false } = {}) 
   }
 
   const buildProject = currentProject;
+  const buildSessionFile = currentFile;
+  if (dirty && activeEditorOwner && activeEditorOwner !== documentSessionInstanceId) {
+    setStatus("Compile paused because another Workbench window owns editing. Focus this editor to take control or compile from the active editor window.");
+    return;
+  }
   compileInFlight = true;
+  postDocumentSessionEvent("compile-started", { target, live }, {
+    project: buildProject,
+    file: buildSessionFile,
+  });
   try {
     if (dirty && (currentFile === target || live)) await saveCurrentFile();
   } catch (error) {
@@ -3755,6 +3958,12 @@ async function compileLatexTarget(target, { force = false, live = false } = {}) 
             : "LaTeX compilation succeeded."
       );
     }
+    postDocumentSessionEvent("compile-succeeded", {
+      target,
+      pdfUrl: data.pdf_url,
+      stale: sourceChangedDuringBuild,
+      live,
+    }, { project: buildProject, file: buildSessionFile });
   } catch (error) {
     const payload = error.payload || {};
     lastCompilerLog = payload.log || "";
@@ -3787,6 +3996,11 @@ async function compileLatexTarget(target, { force = false, live = false } = {}) 
             : `Compilation failed: ${error.message}`
       );
     }
+    postDocumentSessionEvent("compile-failed", {
+      target,
+      error: error.message,
+      live,
+    }, { project: buildProject, file: buildSessionFile });
     console.error(live ? "Live Preview compilation failed:" : "LaTeX compilation failed:", payload || error);
   } finally {
     compileInFlight = false;
@@ -3863,6 +4077,12 @@ editor.addEventListener("input", event => {
   findMatches();
 });
 
+editor.addEventListener("focus", claimDocumentEditor);
+editor.addEventListener("pointerdown", () => {
+  if (editor.readOnly && activeEditorOwner && activeEditorOwner !== documentSessionInstanceId) {
+    claimDocumentEditor();
+  }
+});
 editor.addEventListener("click", updateCursorStatus);
 editor.addEventListener("keyup", updateCursorStatus);
 
@@ -4203,6 +4423,7 @@ window.addEventListener("beforeunload", event => {
 restoreFilesCollapsedState();
 restoreFormattingCollapsedState();
 restoreLivePreviewState();
+initializeDocumentSessionSync();
 if (!configureDetachedEditorMode() && !configureDetachedPreviewMode()) restoreViewMode();
 updateDiagramBuilderAvailability();
 loadProjects(detachedProject || undefined, detachedFile || undefined)
