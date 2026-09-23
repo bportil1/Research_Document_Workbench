@@ -102,6 +102,8 @@ let editorRevision = 0;
 const LIVE_PREVIEW_DEBOUNCE_MS = 1000;
 const FILES_COLLAPSED_STORAGE_KEY = "rdw.ui.filesCollapsed.v1";
 const FORMATTING_COLLAPSED_STORAGE_KEY = "rdw.ui.formattingCollapsed.v1";
+const LIVE_PREVIEW_STORAGE_KEY = "rdw.ui.livePreview.v1";
+const VIEW_MODE_STORAGE_KEY = "rdw.ui.viewMode.v1";
 let searchMatches = [];
 let searchIndex = -1;
 let activeBuildDiagnostics = [];
@@ -222,6 +224,47 @@ function setFormattingCollapsed(collapsed, { persist = true } = {}) {
 
 function restoreFormattingCollapsedState() {
   setFormattingCollapsed(readStoredFormattingCollapsed(), { persist: false });
+}
+
+function readStoredLivePreviewEnabled() {
+  try {
+    return window.localStorage.getItem(LIVE_PREVIEW_STORAGE_KEY) === "true";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function persistLivePreviewEnabled(enabled) {
+  try {
+    window.localStorage.setItem(LIVE_PREVIEW_STORAGE_KEY, String(Boolean(enabled)));
+  } catch (_error) {
+    // Local persistence is optional; Live Preview remains usable when storage is blocked.
+  }
+}
+
+function restoreLivePreviewState() {
+  if (livePreviewToggle) livePreviewToggle.checked = readStoredLivePreviewEnabled();
+}
+
+function readStoredViewMode() {
+  try {
+    const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return ["split", "editor", "preview"].includes(stored) ? stored : "split";
+  } catch (_error) {
+    return "split";
+  }
+}
+
+function persistViewMode(view) {
+  try {
+    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, view);
+  } catch (_error) {
+    // Local persistence is optional; view switching should still work normally.
+  }
+}
+
+function restoreViewMode() {
+  setView(readStoredViewMode(), { persist: false });
 }
 
 async function api(url, options = {}) {
@@ -1638,11 +1681,13 @@ function updateCursorStatus() {
     `Ln ${lines.length}, Col ${lines[lines.length - 1].length + 1}`;
 }
 
-function setView(view) {
-  editorGrid.className = `editor-grid ${view}`;
+function setView(view, { persist = true } = {}) {
+  const next = ["split", "editor", "preview"].includes(view) ? view : "split";
+  editorGrid.className = `editor-grid ${next}`;
   document.querySelectorAll("[data-view]").forEach(button => {
-    button.classList.toggle("active", button.dataset.view === view);
+    button.classList.toggle("active", button.dataset.view === next);
   });
+  if (persist) persistViewMode(next);
 }
 
 function replaceSelection(before, after = before, placeholder = "") {
@@ -3733,6 +3778,7 @@ document.getElementById("topPreviewBtn")
   ?.addEventListener("click", () => setView("preview"));
 
 livePreviewToggle?.addEventListener("change", () => {
+  persistLivePreviewEnabled(livePreviewToggle.checked);
   if (livePreviewToggle.checked) {
     setStatus("Live Preview enabled.");
     scheduleLiveLatexPreview(150);
@@ -3965,5 +4011,7 @@ window.addEventListener("beforeunload", event => {
 
 restoreFilesCollapsedState();
 restoreFormattingCollapsedState();
+restoreLivePreviewState();
+restoreViewMode();
 updateDiagramBuilderAvailability();
 loadProjects().catch(error => setStatus(`Startup failed: ${error.message}`));

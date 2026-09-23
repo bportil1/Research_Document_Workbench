@@ -186,6 +186,8 @@ Compiler output is summarized into actionable diagnostics with file/line jump ac
 
 The text editor keeps line/column status and Top / Line / Bottom / previous-error / next-error controls visible while the document itself scrolls. The application toolbar and filesystem/outline sidebar are independent from document scrolling.
 
+Workbench UI preferences are stored locally in the browser. The Files sidebar state, formatting-toolbar state, Live Preview preference, and Split / Editor / Preview view mode are restored when the Workbench is reopened. If browser storage is unavailable, the Workbench falls back to its normal defaults without blocking editing.
+
 The actual compiler command remains:
 
 ```bash
