@@ -188,6 +188,8 @@ The text editor keeps line/column status and Top / Line / Bottom / previous-erro
 
 Workbench UI preferences are stored locally in the browser. The Files sidebar state, formatting-toolbar state, Live Preview preference, and Split / Editor / Preview view mode are restored when the Workbench is reopened. If browser storage is unavailable, the Workbench falls back to its normal defaults without blocking editing.
 
+**Open Editor Window** and **Open Preview Window** can place the editor and document preview in dedicated browser windows while leaving the combined Workbench available. A detached preview carries the current compiled PDF (including its page/zoom fragment when available) into the new window; it can also compile independently from its focused preview layout.
+
 The actual compiler command remains:
 
 ```bash

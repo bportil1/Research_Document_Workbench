@@ -17,7 +17,10 @@
 <body class="pah-module" data-pah-module-root>
   <header class="topbar pah-module-header">
     <div>
-      <h1>Research Document Workbench</h1>
+      <div class="workbench-title-row">
+        <h1>Research Document Workbench</h1>
+        <span id="detachedModeBadge" class="detached-mode-badge" hidden>Editor window</span>
+      </div>
       <div id="status" class="status">Ready</div>
     </div>
     <div class="top-actions">
@@ -39,6 +42,8 @@
           <button id="newProjectBtn">New project</button>
           <button id="newLatexProjectBtn" title="Create a LaTeX document from a template">New LaTeX document…</button>
           <button id="downloadProjectBtn">Download project</button>
+          <button id="openEditorWindowBtn" type="button" title="Open the current text document in a dedicated editor window">Open Editor Window</button>
+          <button id="openPreviewWindowBtn" type="button" title="Open the current document preview in a dedicated window">Open Preview Window</button>
           <button id="printBtn">Print preview</button>
         </div>
       </details>

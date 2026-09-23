@@ -72,6 +72,22 @@ button.active {
   font-size: 18px;
 }
 
+.workbench-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.detached-mode-badge {
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--accent2);
+  background: var(--panel2);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .status {
   color: var(--muted);
   font-size: 12px;
@@ -171,6 +187,59 @@ button.active {
 
 .workspace.files-collapsed {
   grid-template-columns: 42px 1fr;
+}
+
+body.detached-editor-mode .workspace,
+body.detached-editor-mode .workspace.files-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.detached-editor-mode .sidebar,
+body.detached-editor-mode #documentContextBar,
+body.detached-editor-mode #projectSelect,
+body.detached-editor-mode #topPreviewBtn,
+body.detached-editor-mode #attachProjectBtn,
+body.detached-editor-mode #projectContextBtn,
+body.detached-editor-mode #newProjectBtn,
+body.detached-editor-mode #newLatexProjectBtn,
+body.detached-editor-mode #downloadProjectBtn,
+body.detached-editor-mode #openEditorWindowBtn,
+body.detached-editor-mode #printBtn,
+body.detached-editor-mode [data-view="split"],
+body.detached-editor-mode [data-view="preview"] {
+  display: none !important;
+}
+
+body.detached-editor-mode .editor-grid.editor .editor-pane {
+  border-right: 0;
+}
+
+body.detached-preview-mode .workspace,
+body.detached-preview-mode .workspace.files-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.detached-preview-mode .sidebar,
+body.detached-preview-mode #documentContextBar,
+body.detached-preview-mode #projectSelect,
+body.detached-preview-mode #saveBtn,
+body.detached-preview-mode #topPreviewBtn,
+body.detached-preview-mode #attachProjectBtn,
+body.detached-preview-mode #projectContextBtn,
+body.detached-preview-mode #newProjectBtn,
+body.detached-preview-mode #newLatexProjectBtn,
+body.detached-preview-mode #downloadProjectBtn,
+body.detached-preview-mode #openEditorWindowBtn,
+body.detached-preview-mode #openPreviewWindowBtn,
+body.detached-preview-mode .live-preview-toggle,
+body.detached-preview-mode #textToolbar,
+body.detached-preview-mode [data-view="split"],
+body.detached-preview-mode [data-view="editor"] {
+  display: none !important;
+}
+
+body.detached-preview-mode .editor-grid.preview .preview-pane {
+  border-left: 0;
 }
 
 .sidebar {

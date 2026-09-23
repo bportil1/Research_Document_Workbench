@@ -88,6 +88,18 @@ const latexCreateImages = document.getElementById("latexCreateImages");
 const latexSetDocumentsRoot = document.getElementById("latexSetDocumentsRoot");
 const latexProjectMessage = document.getElementById("latexProjectMessage");
 const livePreviewToggle = document.getElementById("livePreviewToggle");
+const detachedModeBadge = document.getElementById("detachedModeBadge");
+
+const startupParams = new URLSearchParams(window.location.search);
+const detachedMode = startupParams.get("detached") || "";
+const detachedProject = startupParams.get("project") || "";
+const detachedFile = startupParams.get("file") || "";
+const detachedPdfUrl = startupParams.get("pdf") || "";
+const detachedPdfTarget = startupParams.get("pdfTarget") || "";
+const detachedPdfHash = startupParams.get("pdfHash") || "";
+const detachedPdfStale = startupParams.get("pdfStale") === "1";
+const isDetachedEditor = detachedMode === "editor";
+const isDetachedPreview = detachedMode === "preview";
 
 let projects = [];
 let currentProject = "";
@@ -265,6 +277,177 @@ function persistViewMode(view) {
 
 function restoreViewMode() {
   setView(readStoredViewMode(), { persist: false });
+}
+
+function configureDetachedEditorMode() {
+  if (!isDetachedEditor) return false;
+  document.body.classList.add("detached-editor-mode");
+  if (detachedModeBadge) detachedModeBadge.hidden = false;
+  document.title = "Editor — Research Document Workbench";
+  setView("editor", { persist: false });
+  return true;
+}
+
+function configureDetachedPreviewMode() {
+  if (!isDetachedPreview) return false;
+  document.body.classList.add("detached-preview-mode");
+  if (detachedModeBadge) {
+    detachedModeBadge.hidden = false;
+    detachedModeBadge.textContent = "Preview window";
+  }
+  document.title = "Preview — Research Document Workbench";
+  setView("preview", { persist: false });
+  return true;
+}
+
+function detachedEditorUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("detached", "editor");
+  if (currentProject) url.searchParams.set("project", currentProject);
+  else url.searchParams.delete("project");
+  if (currentFile) url.searchParams.set("file", currentFile);
+  else url.searchParams.delete("file");
+  ["pdf", "pdfTarget", "pdfHash", "pdfStale"].forEach(key => url.searchParams.delete(key));
+  return url.toString();
+}
+
+function detachedPreviewUrl() {
+  capturePdfViewState();
+  const url = new URL(window.location.href);
+  url.searchParams.set("detached", "preview");
+  if (currentProject) url.searchParams.set("project", currentProject);
+  else url.searchParams.delete("project");
+  if (currentFile) url.searchParams.set("file", currentFile);
+  else url.searchParams.delete("file");
+
+  if (hasCompiledPdfForCurrentProject()) {
+    url.searchParams.set("pdf", compiledPreview.url);
+    url.searchParams.set("pdfTarget", compiledPreview.target || currentFile);
+    if (pdfViewStateMatchesCurrentPreview() && pdfViewState.hash) {
+      url.searchParams.set("pdfHash", pdfViewState.hash);
+    } else {
+      url.searchParams.delete("pdfHash");
+    }
+    url.searchParams.set("pdfStale", compiledPreview.stale ? "1" : "0");
+  } else {
+    ["pdf", "pdfTarget", "pdfHash", "pdfStale"].forEach(key => url.searchParams.delete(key));
+  }
+  return url.toString();
+}
+
+function sameOriginPreviewUrl(value) {
+  if (!value) return "";
+  try {
+    const candidate = new URL(value, window.location.origin);
+    if (candidate.origin !== window.location.origin) return "";
+    return `${candidate.pathname}${candidate.search}${candidate.hash}`;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function applyDetachedPreviewSnapshot() {
+  if (!isDetachedPreview || !detachedPdfUrl || !currentProject) return false;
+  const safeUrl = sameOriginPreviewUrl(detachedPdfUrl);
+  if (!safeUrl) return false;
+
+  compiledPreview = {
+    project: currentProject,
+    target: detachedPdfTarget || currentFile,
+    url: safeUrl,
+    stale: detachedPdfStale,
+  };
+  pdfViewState = {
+    project: currentProject,
+    target: compiledPreview.target,
+    hash: normalizePdfViewHash(detachedPdfHash),
+    scrollX: 0,
+    scrollY: 0,
+    paneScrollTop: 0,
+  };
+  refreshCompiledPdfPreview(safeUrl);
+  showCompiledPdfPreview({ stale: detachedPdfStale });
+  window.requestAnimationFrame(() => restorePdfViewState());
+  return true;
+}
+
+async function openDetachedEditorWindow() {
+  if (!currentProject || !currentFile) {
+    setStatus("Open a text document before detaching the editor.");
+    return;
+  }
+  if (isNotebookPath(currentFile)) {
+    setStatus("Detached Editor currently supports text documents; notebooks remain in the main Workbench.");
+    return;
+  }
+
+  // Open synchronously from the click gesture so normal popup protection does not
+  // discard the request while a dirty document is saved. The detached window
+  // still loads the same server-backed project/file rather than a copied buffer.
+  const detached = window.open(
+    "about:blank",
+    "rdw-detached-editor",
+    "popup=yes,width=1200,height=900"
+  );
+  if (!detached) {
+    setStatus("Editor window was blocked by the browser. Allow popups for this Workbench and try again.");
+    return;
+  }
+
+  try {
+    detached.document.title = "Opening editor…";
+    detached.document.body.textContent = "Opening Research Document Workbench editor…";
+  } catch (_error) {
+    // The temporary about:blank page is only a popup-preserving bridge.
+  }
+
+  try {
+    if (dirty) await saveCurrentFile();
+    detached.location.replace(detachedEditorUrl());
+    detached.focus();
+    setStatus(`Opened editor window for ${currentFile}`);
+  } catch (error) {
+    try { detached.close(); } catch (_closeError) { /* best effort */ }
+    throw error;
+  }
+}
+
+async function openDetachedPreviewWindow() {
+  if (!currentProject || !currentFile) {
+    setStatus("Open a document before detaching the preview.");
+    return;
+  }
+  if (isNotebookPath(currentFile)) {
+    setStatus("Detached Preview currently supports text documents; notebooks remain in the main Workbench.");
+    return;
+  }
+
+  const detached = window.open(
+    "about:blank",
+    "rdw-detached-preview",
+    "popup=yes,width=1050,height=900"
+  );
+  if (!detached) {
+    setStatus("Preview window was blocked by the browser. Allow popups for this Workbench and try again.");
+    return;
+  }
+
+  try {
+    detached.document.title = "Opening preview…";
+    detached.document.body.textContent = "Opening Research Document Workbench preview…";
+  } catch (_error) {
+    // The temporary about:blank page is only a popup-preserving bridge.
+  }
+
+  try {
+    if (dirty) await saveCurrentFile();
+    detached.location.replace(detachedPreviewUrl());
+    detached.focus();
+    setStatus(`Opened preview window for ${currentFile}`);
+  } catch (error) {
+    try { detached.close(); } catch (_closeError) { /* best effort */ }
+    throw error;
+  }
 }
 
 async function api(url, options = {}) {
@@ -3850,6 +4033,14 @@ document.getElementById("downloadProjectBtn")
       `/api/download-project/${encodeURIComponent(currentProject)}`;
   });
 
+document.getElementById("openEditorWindowBtn")
+  ?.addEventListener("click", () =>
+    openDetachedEditorWindow().catch(error => setStatus(`Open editor failed: ${error.message}`)));
+
+document.getElementById("openPreviewWindowBtn")
+  ?.addEventListener("click", () =>
+    openDetachedPreviewWindow().catch(error => setStatus(`Open preview failed: ${error.message}`)));
+
 const topActionsMore = document.getElementById("topActionsMore");
 topActionsMore?.querySelectorAll("button").forEach(button => {
   button.addEventListener("click", () => topActionsMore.removeAttribute("open"));
@@ -4012,6 +4203,8 @@ window.addEventListener("beforeunload", event => {
 restoreFilesCollapsedState();
 restoreFormattingCollapsedState();
 restoreLivePreviewState();
-restoreViewMode();
+if (!configureDetachedEditorMode() && !configureDetachedPreviewMode()) restoreViewMode();
 updateDiagramBuilderAvailability();
-loadProjects().catch(error => setStatus(`Startup failed: ${error.message}`));
+loadProjects(detachedProject || undefined, detachedFile || undefined)
+  .then(() => applyDetachedPreviewSnapshot())
+  .catch(error => setStatus(`Startup failed: ${error.message}`));
