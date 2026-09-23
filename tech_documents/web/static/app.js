@@ -2,10 +2,14 @@
 
 const projectSelect = document.getElementById("projectSelect");
 const fileList = document.getElementById("fileList");
+const workspaceEl = document.querySelector(".workspace");
+const sidebarEl = document.querySelector(".sidebar");
+const toggleFilesBtn = document.getElementById("toggleFilesBtn");
 const fileContextMenu = document.getElementById("fileContextMenu");
 const editor = document.getElementById("editor");
 const markdownPreview = document.getElementById("markdownPreview");
 const pdfPreview = document.getElementById("pdfPreview");
+const pdfPreviewState = document.getElementById("pdfPreviewState");
 const compilerLog = document.getElementById("compilerLog");
 const buildDiagnostics = document.getElementById("buildDiagnostics");
 const buildDiagnosticsTitle = document.getElementById("buildDiagnosticsTitle");
@@ -26,6 +30,8 @@ const outline = document.getElementById("outline");
 const editorGrid = document.getElementById("editorGrid");
 const searchInput = document.getElementById("searchInput");
 const textToolbar = document.getElementById("textToolbar");
+const toggleFormattingBtn = document.getElementById("toggleFormattingBtn");
+const formattingControls = document.getElementById("formattingControls");
 const notebookWorkspace = document.getElementById("notebookWorkspace");
 const notebookCells = document.getElementById("notebookCells");
 const notebookFilename = document.getElementById("notebookFilename");
@@ -81,6 +87,7 @@ const latexCreateBib = document.getElementById("latexCreateBib");
 const latexCreateImages = document.getElementById("latexCreateImages");
 const latexSetDocumentsRoot = document.getElementById("latexSetDocumentsRoot");
 const latexProjectMessage = document.getElementById("latexProjectMessage");
+const livePreviewToggle = document.getElementById("livePreviewToggle");
 
 let projects = [];
 let currentProject = "";
@@ -88,11 +95,32 @@ let currentFile = "";
 let selectedItem = null;
 let dirty = false;
 let autosaveTimer = null;
+let livePreviewTimer = null;
+let compileInFlight = false;
+let liveCompileQueued = false;
+let editorRevision = 0;
+const LIVE_PREVIEW_DEBOUNCE_MS = 1000;
+const FILES_COLLAPSED_STORAGE_KEY = "rdw.ui.filesCollapsed.v1";
+const FORMATTING_COLLAPSED_STORAGE_KEY = "rdw.ui.formattingCollapsed.v1";
 let searchMatches = [];
 let searchIndex = -1;
 let activeBuildDiagnostics = [];
 let activeBuildDiagnosticIndex = -1;
 let lastCompilerLog = "";
+let compiledPreview = {
+  project: "",
+  target: "",
+  url: "",
+  stale: false,
+};
+let pdfViewState = {
+  project: "",
+  target: "",
+  hash: "",
+  scrollX: 0,
+  scrollY: 0,
+  paneScrollTop: 0,
+};
 const expandedFolders = new Set();
 
 const editorHistories = new Map();
@@ -130,6 +158,70 @@ mermaid.initialize({
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function readStoredFilesCollapsed() {
+  try {
+    return window.localStorage.getItem(FILES_COLLAPSED_STORAGE_KEY) === "true";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function persistFilesCollapsed(collapsed) {
+  try {
+    window.localStorage.setItem(FILES_COLLAPSED_STORAGE_KEY, String(Boolean(collapsed)));
+  } catch (_error) {
+    // Local persistence is optional; collapsing should still work when storage is blocked.
+  }
+}
+
+function setFilesCollapsed(collapsed, { persist = true } = {}) {
+  const next = Boolean(collapsed);
+  workspaceEl?.classList.toggle("files-collapsed", next);
+  sidebarEl?.classList.toggle("collapsed", next);
+  if (toggleFilesBtn) {
+    toggleFilesBtn.textContent = next ? "›" : "‹";
+    toggleFilesBtn.setAttribute("aria-expanded", String(!next));
+    toggleFilesBtn.title = next ? "Expand Files panel" : "Collapse Files panel";
+  }
+  if (persist) persistFilesCollapsed(next);
+}
+
+function restoreFilesCollapsedState() {
+  setFilesCollapsed(readStoredFilesCollapsed(), { persist: false });
+}
+
+function readStoredFormattingCollapsed() {
+  try {
+    return window.localStorage.getItem(FORMATTING_COLLAPSED_STORAGE_KEY) === "true";
+  } catch (_error) {
+    return false;
+  }
+}
+
+function persistFormattingCollapsed(collapsed) {
+  try {
+    window.localStorage.setItem(FORMATTING_COLLAPSED_STORAGE_KEY, String(Boolean(collapsed)));
+  } catch (_error) {
+    // Local persistence is optional; formatting remains usable when storage is blocked.
+  }
+}
+
+function setFormattingCollapsed(collapsed, { persist = true } = {}) {
+  const next = Boolean(collapsed);
+  textToolbar?.classList.toggle("formatting-collapsed", next);
+  if (formattingControls) formattingControls.hidden = next;
+  if (toggleFormattingBtn) {
+    toggleFormattingBtn.textContent = next ? "Formatting ▸" : "Formatting ▾";
+    toggleFormattingBtn.setAttribute("aria-expanded", String(!next));
+    toggleFormattingBtn.title = next ? "Expand formatting controls" : "Collapse formatting controls";
+  }
+  if (persist) persistFormattingCollapsed(next);
+}
+
+function restoreFormattingCollapsedState() {
+  setFormattingCollapsed(readStoredFormattingCollapsed(), { persist: false });
 }
 
 async function api(url, options = {}) {
@@ -365,8 +457,10 @@ function applyHistoryState(state) {
   );
   applyingHistoryState = false;
 
+  editorRevision += 1;
   scheduleAutosave();
-  updatePreview();
+  updatePreview({ contentChanged: true });
+  scheduleLiveLatexPreview();
   updateCursorStatus();
   findMatches();
 }
@@ -431,8 +525,10 @@ function deleteHistoriesForPath(project, path, recursive = false) {
 
 function afterProgrammaticEdit() {
   recordEditorState("insertReplacementText", true);
+  editorRevision += 1;
   scheduleAutosave();
-  updatePreview();
+  updatePreview({ contentChanged: true });
+  scheduleLiveLatexPreview();
   updateCursorStatus();
   findMatches();
 }
@@ -682,6 +778,7 @@ function renderFiles() {
 }
 
 async function openFile(filename) {
+  cancelLiveLatexPreview();
   closeDiagramBuilder();
   if (isNotebookPath(filename)) {
     await openNotebook(filename);
@@ -702,6 +799,7 @@ async function openFile(filename) {
   ensureCurrentParentsExpanded(currentFile);
   editor.value = data.content;
   dirty = false;
+  editorRevision += 1;
   initializeEditorHistory(data.content);
   currentFilename.textContent = currentFile;
   setStatus(`Opened ${currentFile}`);
@@ -1384,20 +1482,146 @@ function renderPlainSourcePreview() {
   buildLatexOutline();
 }
 
-function updatePreview() {
+function hasCompiledPdfForCurrentProject() {
+  return Boolean(
+    compiledPreview.url &&
+    compiledPreview.project === currentProject
+  );
+}
+
+function normalizePdfViewHash(value) {
+  const hash = String(value || "").trim();
+  if (!hash || hash === "#") return "";
+  return hash.startsWith("#") ? hash : `#${hash}`;
+}
+
+function pdfViewStateMatchesCurrentPreview() {
+  return Boolean(
+    pdfViewState.project === compiledPreview.project &&
+    pdfViewState.target === compiledPreview.target
+  );
+}
+
+function capturePdfViewState() {
+  if (!hasCompiledPdfForCurrentProject()) return;
+
+  if (!pdfViewStateMatchesCurrentPreview()) {
+    pdfViewState = {
+      project: compiledPreview.project,
+      target: compiledPreview.target,
+      hash: "",
+      scrollX: 0,
+      scrollY: 0,
+      paneScrollTop: 0,
+    };
+  }
+
+  const previewPane = pdfPreview.closest(".preview-pane");
+  if (previewPane) pdfViewState.paneScrollTop = previewPane.scrollTop || 0;
+
+  // Native PDF viewers vary by browser. Firefox/Chromium may expose either the
+  // current URL fragment or scroll offsets; both accesses are intentionally
+  // best-effort because browser PDF viewers can live in a protected context.
+  try {
+    const frameWindow = pdfPreview.contentWindow;
+    const hash = normalizePdfViewHash(frameWindow?.location?.hash);
+    if (hash) pdfViewState.hash = hash;
+    const scrollX = Number(frameWindow?.scrollX);
+    const scrollY = Number(frameWindow?.scrollY);
+    if (Number.isFinite(scrollX)) pdfViewState.scrollX = scrollX;
+    if (Number.isFinite(scrollY)) pdfViewState.scrollY = scrollY;
+  } catch (_error) {
+    // Cross-origin/protected native viewers are expected to reject this.
+  }
+
+  if (!pdfViewState.hash) {
+    const src = String(pdfPreview.getAttribute("src") || "");
+    const hashIndex = src.indexOf("#");
+    if (hashIndex >= 0) pdfViewState.hash = normalizePdfViewHash(src.slice(hashIndex));
+  }
+}
+
+function buildPdfPreviewUrl(url) {
+  const separator = String(url).includes("?") ? "&" : "?";
+  const hash = pdfViewStateMatchesCurrentPreview() ? pdfViewState.hash : "";
+  return `${url}${separator}t=${Date.now()}${hash}`;
+}
+
+function restorePdfViewState() {
+  if (!pdfViewStateMatchesCurrentPreview()) return;
+  const previewPane = pdfPreview.closest(".preview-pane");
+  if (previewPane) previewPane.scrollTop = pdfViewState.paneScrollTop || 0;
+
+  try {
+    const frameWindow = pdfPreview.contentWindow;
+    if (pdfViewState.hash && !frameWindow.location.hash) {
+      frameWindow.location.hash = pdfViewState.hash;
+    }
+    if (pdfViewState.scrollX || pdfViewState.scrollY) {
+      frameWindow.scrollTo(pdfViewState.scrollX, pdfViewState.scrollY);
+    }
+  } catch (_error) {
+    // The URL fragment already carries page/zoom state when direct access is blocked.
+  }
+}
+
+function refreshCompiledPdfPreview(url) {
+  capturePdfViewState();
+  pdfPreview.src = buildPdfPreviewUrl(url);
+}
+
+function updatePdfPreviewState() {
+  if (!pdfPreviewState) return;
+  const showStale =
+    pdfPreview.style.display === "block" &&
+    hasCompiledPdfForCurrentProject() &&
+    compiledPreview.stale;
+  pdfPreviewState.hidden = !showStale;
+  pdfPreviewState.textContent = showStale ? "Out of date" : "";
+  pdfPreviewState.title = showStale
+    ? "The compiled PDF is older than the current LaTeX source. Compile to refresh it."
+    : "";
+}
+
+function showCompiledPdfPreview({ stale = compiledPreview.stale } = {}) {
+  if (!hasCompiledPdfForCurrentProject()) return false;
+  compiledPreview.stale = Boolean(stale);
+  markdownPreview.style.display = "none";
+  pdfPreview.style.display = "block";
+  updatePdfPreviewState();
+  return true;
+}
+
+function hideCompiledPdfPreview() {
   pdfPreview.style.display = "none";
+  updatePdfPreviewState();
+}
+
+function updatePreview({ contentChanged = false } = {}) {
   hideRawCompilerLog();
   buildDiagnostics.hidden = true;
-  markdownPreview.style.display = "block";
+  buildDiagnostics.classList.remove("with-pdf-preview");
 
   const extension = currentExtension();
-  if (extension === ".md" || extension === ".markdown") {
-    renderMarkdown();
-  } else if (extension === ".diagram") {
-    outline.innerHTML = "";
-    scheduleDiagramPreview();
+  if (
+    extension === ".tex" &&
+    hasCompiledPdfForCurrentProject()
+  ) {
+    if (contentChanged) compiledPreview.stale = true;
+    showCompiledPdfPreview();
+    buildLatexOutline();
   } else {
-    renderPlainSourcePreview();
+    hideCompiledPdfPreview();
+    markdownPreview.style.display = "block";
+
+    if (extension === ".md" || extension === ".markdown") {
+      renderMarkdown();
+    } else if (extension === ".diagram") {
+      outline.innerHTML = "";
+      scheduleDiagramPreview();
+    } else {
+      renderPlainSourcePreview();
+    }
   }
 
   const words = editor.value.trim()
@@ -1781,7 +2005,7 @@ function showNotebookWorkspace() {
   document.getElementById("printBtn").disabled = true;
   outline.innerHTML = "";
   markdownPreview.style.display = "none";
-  pdfPreview.style.display = "none";
+  hideCompiledPdfPreview();
   compilerLog.style.display = "none";
 }
 
@@ -3021,6 +3245,7 @@ function clearBuildDiagnostics() {
   activeBuildDiagnosticIndex = -1;
   setBuildDiagnosticsCollapsed(false);
   buildDiagnostics.hidden = true;
+  buildDiagnostics.classList.remove("with-pdf-preview");
   buildDiagnosticsList.innerHTML = "";
   buildAnywayBtn.hidden = true;
   document.getElementById("prevBuildErrorBtn").disabled = true;
@@ -3097,7 +3322,10 @@ async function jumpToLine(lineNumber, path = currentFile) {
   if (savedDiagnostics.length) {
     activeBuildDiagnostics = savedDiagnostics;
     activeBuildDiagnosticIndex = savedIndex;
-    renderBuildDiagnostics(savedDiagnostics, { title: buildDiagnosticsTitle.textContent || "LaTeX diagnostics" });
+    renderBuildDiagnostics(savedDiagnostics, {
+      title: buildDiagnosticsTitle.textContent || "LaTeX diagnostics",
+      preservePdf: hasCompiledPdfForCurrentProject(),
+    });
   }
 }
 
@@ -3186,17 +3414,167 @@ function renderBuildDiagnostics(diagnostics, options = {}) {
   document.getElementById("prevBuildErrorBtn").disabled = navigable.length === 0;
   document.getElementById("nextBuildErrorBtn").disabled = navigable.length === 0;
   markdownPreview.style.display = "none";
-  pdfPreview.style.display = "none";
+  const preserved = Boolean(options.preservePdf) && showCompiledPdfPreview();
+  buildDiagnostics.classList.toggle("with-pdf-preview", preserved);
+  if (!preserved) hideCompiledPdfPreview();
+}
+
+function resolveLatexCompileTarget({ preferMain = false } = {}) {
+  const project = projectData();
+  const mainTex = String(project?.main_tex || "");
+  if (preferMain && mainTex.toLowerCase().endsWith(".tex")) return mainTex;
+  if (String(currentFile || "").toLowerCase().endsWith(".tex")) return currentFile;
+  return mainTex.toLowerCase().endsWith(".tex") ? mainTex : "";
+}
+
+function cancelLiveLatexPreview() {
+  clearTimeout(livePreviewTimer);
+  livePreviewTimer = null;
+}
+
+function scheduleLiveLatexPreview(delay = LIVE_PREVIEW_DEBOUNCE_MS) {
+  cancelLiveLatexPreview();
+  if (!livePreviewToggle?.checked || currentExtension() !== ".tex") return;
+  livePreviewTimer = setTimeout(() => {
+    livePreviewTimer = null;
+    runLiveLatexPreview().catch(error => {
+      setStatus(`Live Preview failed: ${error.message}`);
+      console.error("Live Preview failed:", error);
+    });
+  }, delay);
+}
+
+async function runLiveLatexPreview() {
+  if (!livePreviewToggle?.checked || currentExtension() !== ".tex") return;
+  if (compileInFlight) {
+    liveCompileQueued = true;
+    return;
+  }
+  const target = resolveLatexCompileTarget({ preferMain: true });
+  if (!target) {
+    setStatus("Live Preview needs a .tex file or configured Main LaTeX file.");
+    return;
+  }
+  await compileLatexTarget(target, { live: true });
+}
+
+async function compileLatexTarget(target, { force = false, live = false } = {}) {
+  if (!currentProject || !target) return;
+  if (compileInFlight) {
+    if (live) liveCompileQueued = true;
+    return;
+  }
+
+  const buildProject = currentProject;
+  compileInFlight = true;
+  try {
+    if (dirty && (currentFile === target || live)) await saveCurrentFile();
+  } catch (error) {
+    compileInFlight = false;
+    throw error;
+  }
+  const revisionAtStart = editorRevision;
+
+  const compileButton = document.getElementById("compileBtn");
+  compileButton.disabled = true;
+  compileButton.textContent = live
+    ? "Live Preview..."
+    : force
+      ? "Building anyway..."
+      : "Preflight + Build...";
+
+  try {
+    setStatus(
+      live
+        ? "Updating Live Preview..."
+        : force
+          ? "Compiling LaTeX despite preflight blockers..."
+          : "Checking and compiling LaTeX..."
+    );
+    hideRawCompilerLog();
+    const data = await api(
+      `/api/compile/${encodeURIComponent(buildProject)}/${encodeRelativePath(target)}`,
+      { method: "POST", body: JSON.stringify({ force }) }
+    );
+    lastCompilerLog = data.log || "";
+    const sourceChangedDuringBuild = editorRevision !== revisionAtStart;
+    compiledPreview = {
+      project: buildProject,
+      target,
+      url: data.pdf_url,
+      stale: sourceChangedDuringBuild,
+    };
+
+    if (currentProject === buildProject) {
+      refreshCompiledPdfPreview(data.pdf_url);
+      const warnings = (data.diagnostics || []).filter(item => item.severity === "warning");
+      if (warnings.length) {
+        renderBuildDiagnostics(warnings, {
+          title: live ? "Live Preview updated with warnings" : "Build succeeded with warnings",
+          summary: `${warnings.length} warning${warnings.length === 1 ? "" : "s"}`,
+          preservePdf: true,
+        });
+        showCompiledPdfPreview({ stale: sourceChangedDuringBuild });
+      } else {
+        clearBuildDiagnostics();
+        showCompiledPdfPreview({ stale: sourceChangedDuringBuild });
+      }
+      setStatus(
+        sourceChangedDuringBuild
+          ? "PDF updated, but newer edits are waiting for the next build."
+          : live
+            ? "Live Preview updated."
+            : "LaTeX compilation succeeded."
+      );
+    }
+  } catch (error) {
+    const payload = error.payload || {};
+    lastCompilerLog = payload.log || "";
+    const diagnostics = payload.diagnostics || payload.preflight?.diagnostics || [];
+    const preflightBlocked = Boolean(payload.preflight && payload.preflight.ok === false && !force);
+    if (currentProject === buildProject) {
+      renderBuildDiagnostics(diagnostics.length ? diagnostics : [{
+        severity: "error",
+        code: "build-failed",
+        message: error.message,
+        suggestion: "Open the raw build log for compiler details.",
+      }], {
+        title: preflightBlocked
+          ? "Preflight found blockers"
+          : live
+            ? "Live Preview build failed"
+            : "Build failed",
+        summary: diagnosticSummary(diagnostics),
+        allowForce: preflightBlocked && !live,
+        preservePdf: hasCompiledPdfForCurrentProject(),
+      });
+      markdownPreview.style.display = "none";
+      setStatus(
+        preflightBlocked
+          ? live
+            ? "Live Preview paused on LaTeX preflight blockers."
+            : "Fix the LaTeX preflight blockers or choose Build anyway."
+          : live
+            ? `Live Preview failed: ${error.message}`
+            : `Compilation failed: ${error.message}`
+      );
+    }
+    console.error(live ? "Live Preview compilation failed:" : "LaTeX compilation failed:", payload || error);
+  } finally {
+    compileInFlight = false;
+    compileButton.disabled = false;
+    compileButton.textContent = "Compile LaTeX";
+    if (liveCompileQueued) {
+      liveCompileQueued = false;
+      if (livePreviewToggle?.checked) scheduleLiveLatexPreview(150);
+    }
+  }
 }
 
 async function compileCurrentFile(force = false) {
   if (!currentProject) return;
-  let target = currentFile;
-  const project = projectData();
-  if (!String(target || "").toLowerCase().endsWith(".tex")) {
-    target = project?.main_tex || "";
-  }
-  if (!target || !target.toLowerCase().endsWith(".tex")) {
+  const target = resolveLatexCompileTarget();
+  if (!target) {
     setStatus("Select a .tex file or configure a Main LaTeX file before compiling.");
     renderBuildDiagnostics([
       {
@@ -3208,56 +3586,7 @@ async function compileCurrentFile(force = false) {
     ], { title: "Build cannot start" });
     return;
   }
-
-  if (dirty && currentFile === target) await saveCurrentFile();
-  const compileButton = document.getElementById("compileBtn");
-  compileButton.disabled = true;
-  compileButton.textContent = force ? "Building anyway..." : "Preflight + Build...";
-
-  try {
-    setStatus(force ? "Compiling LaTeX despite preflight blockers..." : "Checking and compiling LaTeX...");
-    hideRawCompilerLog();
-    const data = await api(
-      `/api/compile/${encodeURIComponent(currentProject)}/${encodeRelativePath(target)}`,
-      { method: "POST", body: JSON.stringify({ force }) }
-    );
-    lastCompilerLog = data.log || "";
-    const warnings = (data.diagnostics || []).filter(item => item.severity === "warning");
-    if (warnings.length) {
-      renderBuildDiagnostics(warnings, {
-        title: "Build succeeded with warnings",
-        summary: `${warnings.length} warning${warnings.length === 1 ? "" : "s"}`,
-      });
-    } else {
-      clearBuildDiagnostics();
-    }
-    pdfPreview.src = `${data.pdf_url}?t=${Date.now()}`;
-    pdfPreview.style.display = "block";
-    markdownPreview.style.display = "none";
-    setStatus("LaTeX compilation succeeded.");
-  } catch (error) {
-    const payload = error.payload || {};
-    lastCompilerLog = payload.log || "";
-    const diagnostics = payload.diagnostics || payload.preflight?.diagnostics || [];
-    const preflightBlocked = Boolean(payload.preflight && payload.preflight.ok === false && !force);
-    renderBuildDiagnostics(diagnostics.length ? diagnostics : [{
-      severity: "error",
-      code: "build-failed",
-      message: error.message,
-      suggestion: "Open the raw build log for compiler details.",
-    }], {
-      title: preflightBlocked ? "Preflight found blockers" : "Build failed",
-      summary: diagnosticSummary(diagnostics),
-      allowForce: preflightBlocked,
-    });
-    pdfPreview.style.display = "none";
-    markdownPreview.style.display = "none";
-    setStatus(preflightBlocked ? "Fix the LaTeX preflight blockers or choose Build anyway." : `Compilation failed: ${error.message}`);
-    console.error("LaTeX compilation failed:", payload || error);
-  } finally {
-    compileButton.disabled = false;
-    compileButton.textContent = "Compile LaTeX";
-  }
+  await compileLatexTarget(target, { force, live: false });
 }
 
 function findMatches() {
@@ -3298,8 +3627,10 @@ function navigateSearch(direction) {
 
 editor.addEventListener("input", event => {
   recordEditorState(event.inputType || "input");
+  editorRevision += 1;
   scheduleAutosave();
-  updatePreview();
+  updatePreview({ contentChanged: true });
+  scheduleLiveLatexPreview();
   updateCursorStatus();
   findMatches();
 });
@@ -3357,6 +3688,16 @@ projectSelect.addEventListener("change", async () => {
 document.getElementById("newProjectBtn")
   .addEventListener("click", () => createProject());
 
+toggleFilesBtn?.addEventListener("click", () => {
+  const collapsed = !workspaceEl?.classList.contains("files-collapsed");
+  setFilesCollapsed(collapsed);
+});
+
+toggleFormattingBtn?.addEventListener("click", () => {
+  const collapsed = !textToolbar?.classList.contains("formatting-collapsed");
+  setFormattingCollapsed(collapsed);
+});
+
 document.getElementById("newFileBtn")
   .addEventListener("click", () =>
     createFile().catch(error => setStatus(error.message)));
@@ -3379,8 +3720,28 @@ document.getElementById("saveBtn")
   .addEventListener("click", () =>
     saveCurrentFile().catch(error => setStatus(error.message)));
 
+pdfPreview?.addEventListener("load", () => {
+  // Give the browser PDF viewer one frame to initialize before restoring any
+  // scroll state that it exposes to the parent document.
+  window.requestAnimationFrame(() => restorePdfViewState());
+});
+
 document.getElementById("compileBtn")
   .addEventListener("click", () => compileCurrentFile(false));
+
+document.getElementById("topPreviewBtn")
+  ?.addEventListener("click", () => setView("preview"));
+
+livePreviewToggle?.addEventListener("change", () => {
+  if (livePreviewToggle.checked) {
+    setStatus("Live Preview enabled.");
+    scheduleLiveLatexPreview(150);
+  } else {
+    cancelLiveLatexPreview();
+    liveCompileQueued = false;
+    setStatus("Live Preview disabled.");
+  }
+});
 
 document.getElementById("attachProjectBtn")
   ?.addEventListener("click", () => openAttachProjectDialog(false));
@@ -3442,6 +3803,17 @@ document.getElementById("downloadProjectBtn")
     window.location.href =
       `/api/download-project/${encodeURIComponent(currentProject)}`;
   });
+
+const topActionsMore = document.getElementById("topActionsMore");
+topActionsMore?.querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => topActionsMore.removeAttribute("open"));
+});
+
+document.addEventListener("click", event => {
+  if (topActionsMore?.open && !topActionsMore.contains(event.target)) {
+    topActionsMore.removeAttribute("open");
+  }
+});
 
 document.getElementById("uploadInput")
   .addEventListener("change", event => {
@@ -3591,5 +3963,7 @@ window.addEventListener("beforeunload", event => {
   }
 });
 
+restoreFilesCollapsedState();
+restoreFormattingCollapsedState();
 updateDiagramBuilderAvailability();
 loadProjects().catch(error => setStatus(`Startup failed: ${error.message}`));

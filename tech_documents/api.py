@@ -3,11 +3,11 @@ from __future__ import annotations
 import base64
 import json
 import binascii
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
-import uuid
 from typing import Any, BinaryIO
 
 from .compilation import (
@@ -917,7 +917,8 @@ class DocumentEngine:
                 preflight=preflight_payload,
             )
 
-        build_id = uuid.uuid4().hex
+        build_key = f"{documents_root}\0{relative_source.as_posix()}".encode("utf-8")
+        build_id = hashlib.sha256(build_key).hexdigest()[:32]
         builds_dir.mkdir(parents=True, exist_ok=True)
         source_dir, output_dir = prepare_build_workspace(documents_root, builds_dir, build_id)
         build_source_file = source_dir / relative_source

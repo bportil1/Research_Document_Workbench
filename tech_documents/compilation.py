@@ -19,10 +19,19 @@ class CompilationResult:
 
 
 def prepare_build_workspace(project_path: Path, builds_dir: Path, build_id: str) -> tuple[Path, Path]:
-    """Copy a complete project into an isolated build workspace."""
+    """Refresh build sources while preserving compiler intermediates.
+
+    The source snapshot is replaced on every build so deleted/renamed project
+    files cannot linger in the build tree.  The output directory is deliberately
+    retained for a stable ``build_id`` so latexmk/Tectonic can reuse auxiliary
+    files between preview builds.
+    """
     build_root = builds_dir / build_id
     source_dir = build_root / "source"
     output_dir = build_root / "output"
+    build_root.mkdir(parents=True, exist_ok=True)
+    if source_dir.exists():
+        shutil.rmtree(source_dir)
     shutil.copytree(
         project_path,
         source_dir,

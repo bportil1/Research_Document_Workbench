@@ -22,14 +22,26 @@
     </div>
     <div class="top-actions">
       <select id="projectSelect" title="Project"></select>
-      <button id="attachProjectBtn" title="Attach an existing local repository or folder">Attach folder</button>
-      <button id="projectContextBtn" title="Inspect or change project/Documents build roots">Directory context</button>
-      <button id="newProjectBtn">New project</button>
-      <button id="newLatexProjectBtn">New LaTeX…</button>
-      <button id="downloadProjectBtn">Download project</button>
-      <button id="saveBtn" class="primary">Save</button>
-      <button id="compileBtn">Compile LaTeX</button>
-      <button id="printBtn">Print preview</button>
+      <div class="top-primary-actions" aria-label="Writing actions">
+        <button id="saveBtn" class="primary">Save</button>
+        <button id="compileBtn">Compile</button>
+        <button id="topPreviewBtn" type="button" title="Show preview only">Preview</button>
+      </div>
+      <details id="topActionsMore" class="top-actions-more">
+        <summary aria-label="More workbench actions">More ▾</summary>
+        <div class="top-actions-menu" role="group" aria-label="More workbench actions">
+          <label class="live-preview-toggle" title="Compile the main LaTeX document after typing pauses">
+            <input id="livePreviewToggle" type="checkbox">
+            <span>Live Preview</span>
+          </label>
+          <button id="attachProjectBtn" title="Attach an existing local repository or folder">Attach folder</button>
+          <button id="projectContextBtn" title="Inspect or change project/Documents build roots">Directory context</button>
+          <button id="newProjectBtn">New project</button>
+          <button id="newLatexProjectBtn" title="Create a LaTeX document from a template">New LaTeX document…</button>
+          <button id="downloadProjectBtn">Download project</button>
+          <button id="printBtn">Print preview</button>
+        </div>
+      </details>
     </div>
   </header>
 
@@ -43,7 +55,10 @@
   <div class="workspace">
     <aside class="sidebar">
       <div class="sidebar-header">
-        <strong>Files</strong>
+        <div class="sidebar-title">
+          <button id="toggleFilesBtn" class="small sidebar-collapse-btn" type="button" aria-expanded="true" aria-controls="fileList outline" title="Collapse Files panel">‹</button>
+          <strong>Files</strong>
+        </div>
         <div class="file-actions">
           <button id="newFileBtn" class="small" title="New file">+F</button>
           <button id="newNotebookBtn" class="small" title="New Python notebook">+N</button>
@@ -62,13 +77,17 @@
 
     <main class="main-area">
       <div id="textToolbar" class="toolbar pah-toolbar">
+        <div class="toolbar-group formatting-toggle-group">
+          <button id="toggleFormattingBtn" type="button" aria-expanded="true" aria-controls="formattingControls" title="Collapse formatting controls">Formatting ▾</button>
+        </div>
+
         <div class="toolbar-group history-controls">
           <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>Undo</button>
           <button id="redoBtn" title="Redo (Ctrl+Shift+Z or Ctrl+Y)" disabled>Redo</button>
           <button id="diagramBuilderBtn" title="Open the visual builder for the current .diagram file">Diagram Builder</button>
         </div>
 
-        <div class="toolbar-group">
+        <div id="formattingControls" class="toolbar-group formatting-controls">
           <button data-command="h1">H1</button>
           <button data-command="h2">H2</button>
           <button data-command="h3">H3</button>
@@ -149,7 +168,10 @@
         <section class="preview-pane">
           <div class="pane-title">
             <span>Preview</span>
-            <span id="wordCount">0 words</span>
+            <div class="preview-title-meta">
+              <span id="pdfPreviewState" class="pdf-preview-state" hidden>Out of date</span>
+              <span id="wordCount">0 words</span>
+            </div>
           </div>
           <article id="markdownPreview" class="document-preview"></article>
           <iframe id="pdfPreview" class="pdf-preview" title="Compiled PDF"></iframe>

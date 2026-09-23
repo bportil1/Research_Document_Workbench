@@ -120,6 +120,41 @@ class LatexDirectoryContextTests(unittest.TestCase):
 
     @mock.patch("tech_documents.latex_tools._kpsewhich", return_value=True)
     @mock.patch("tech_documents.api.shutil.which", side_effect=lambda name: "/usr/bin/latexmk" if name == "latexmk" else None)
+    def test_compile_reuses_output_cache_and_refreshes_source_snapshot(self, _which, _kpsewhich):
+        repo = Path(self.temp.name) / "persistent-build-repo"
+        repo.mkdir()
+        main = repo / "main.tex"
+        main.write_text(
+            "\\documentclass{article}\n\\begin{document}first\\end{document}\n",
+            encoding="utf-8",
+        )
+        name = self.engine.link_project(repo)
+        output_dirs = []
+
+        def fake_compile(source_file: Path, output_dir: Path):
+            output_dirs.append(output_dir)
+            if len(output_dirs) == 2:
+                self.assertTrue((output_dir / "main.aux").exists())
+                self.assertIn("second", source_file.read_text(encoding="utf-8"))
+            (output_dir / "main.aux").write_text("cached aux", encoding="utf-8")
+            (output_dir / "main.pdf").write_bytes(b"%PDF-fake")
+            return subprocess.CompletedProcess(["latexmk"], 0, stdout="ok", stderr="")
+
+        with mock.patch("tech_documents.api.compile_with_latexmk", side_effect=fake_compile):
+            first = self.engine.compile_latex(name, "main.tex")
+            main.write_text(
+                "\\documentclass{article}\n\\begin{document}second\\end{document}\n",
+                encoding="utf-8",
+            )
+            second = self.engine.compile_latex(name, "main.tex")
+
+        self.assertTrue(first.ok)
+        self.assertTrue(second.ok)
+        self.assertEqual(first.build_id, second.build_id)
+        self.assertEqual(output_dirs[0], output_dirs[1])
+
+    @mock.patch("tech_documents.latex_tools._kpsewhich", return_value=True)
+    @mock.patch("tech_documents.api.shutil.which", side_effect=lambda name: "/usr/bin/latexmk" if name == "latexmk" else None)
     def test_compile_latex_path_preserves_host_facing_api(self, _which, _kpsewhich):
         repo = Path(self.temp.name) / "host-owned-repo"
         repo.mkdir()
@@ -187,6 +222,53 @@ class LatexFrontendContractTests(unittest.TestCase):
         self.assertIn("New Project Root selected", js)
         self.assertIn(".workbench-path-control", css)
         self.assertIn("compileCurrentFile(force = false)", js)
+        self.assertIn('id="pdfPreviewState"', html)
+        self.assertIn("showCompiledPdfPreview", js)
+        self.assertIn("contentChanged: true", js)
+        self.assertIn('pdfPreviewState.textContent = showStale ? "Out of date" : "";', js)
+        self.assertIn("preservePdf: hasCompiledPdfForCurrentProject()", js)
+        self.assertIn(".pdf-preview-state", css)
+        self.assertIn(".build-diagnostics.with-pdf-preview", css)
+        self.assertIn('id="livePreviewToggle"', html)
+        self.assertIn("LIVE_PREVIEW_DEBOUNCE_MS = 1000", js)
+        self.assertIn("scheduleLiveLatexPreview", js)
+        self.assertIn("runLiveLatexPreview", js)
+        self.assertIn("preferMain: true", js)
+        self.assertIn("sourceChangedDuringBuild", js)
+        self.assertIn("capturePdfViewState", js)
+        self.assertIn("buildPdfPreviewUrl", js)
+        self.assertIn("restorePdfViewState", js)
+        self.assertIn("refreshCompiledPdfPreview(data.pdf_url)", js)
+        self.assertIn("pdfViewState.hash", js)
+        self.assertIn("paneScrollTop", js)
+        self.assertIn('id="toggleFilesBtn"', html)
+        self.assertIn("FILES_COLLAPSED_STORAGE_KEY", js)
+        self.assertIn("setFilesCollapsed", js)
+        self.assertIn("restoreFilesCollapsedState", js)
+        self.assertIn('classList.toggle("files-collapsed", next)', js)
+        self.assertIn(".workspace.files-collapsed", css)
+        self.assertIn(".sidebar.collapsed #fileList", css)
+        self.assertIn(".sidebar-collapse-btn", css)
+        self.assertIn('id="toggleFormattingBtn"', html)
+        self.assertIn('id="formattingControls"', html)
+        self.assertIn("FORMATTING_COLLAPSED_STORAGE_KEY", js)
+        self.assertIn("setFormattingCollapsed", js)
+        self.assertIn("restoreFormattingCollapsedState", js)
+        self.assertIn('textToolbar?.classList.toggle("formatting-collapsed", next)', js)
+        self.assertIn("formattingControls.hidden = next", js)
+        self.assertIn(".formatting-controls[hidden]", css)
+        self.assertIn(".toolbar.formatting-collapsed", css)
+        self.assertIn('id="topPreviewBtn"', html)
+        self.assertIn('id="topActionsMore"', html)
+        self.assertIn('class="top-primary-actions"', html)
+        self.assertIn('>Compile</button>', html)
+        self.assertIn('New LaTeX document…', html)
+        self.assertIn('setView("preview")', js)
+        self.assertIn('topActionsMore.removeAttribute("open")', js)
+        self.assertIn(".top-actions-more", css)
+        self.assertIn(".top-actions-menu", css)
+        self.assertIn(".top-primary-actions", css)
+        self.assertIn(".live-preview-toggle", css)
         self.assertIn(".editor-statusbar", css)
         self.assertIn(".build-diagnostics.collapsed", css)
         self.assertIn("overflow: hidden", css)
