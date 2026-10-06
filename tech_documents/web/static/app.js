@@ -2059,7 +2059,11 @@ function updatePreview({ contentChanged = false } = {}) {
     markdownPreview.style.display = "block";
 
     if (extension === ".md" || extension === ".markdown") {
-      renderMarkdown();
+      if (workbenchPurpose === "presentations") renderMarkdownPresentationPreview();
+      else {
+        markdownPreview.classList.remove("presentation-markdown-preview");
+        renderMarkdown();
+      }
     } else if (extension === ".diagram") {
       outline.innerHTML = "";
       scheduleDiagramPreview();
@@ -2503,6 +2507,8 @@ function updatePresentationPurposeUI() {
     if (!presentationActive && notebookSlidePreviewVisible) {
       setNotebookSlidePreviewVisible(false);
     }
+  } else if (isMarkdownPath(currentFile)) {
+    updatePreview();
   }
   updateTopPreviewButton();
 }
@@ -3095,46 +3101,79 @@ function renderPresentationCode(cell, index, container) {
   container.appendChild(shell);
 }
 
-function ensurePresentationGroup(groups) {
-  if (!groups.length) groups.push([[]]);
-  const horizontal = groups[groups.length - 1];
-  if (!horizontal.length) horizontal.push([]);
-  return horizontal[horizontal.length - 1];
+function createPresentationModel(sourceKind) {
+  return {
+    sourceKind,
+    horizontals: [],
+  };
 }
 
-function presentationGroups() {
-  const groups = [];
-  let currentVertical = null;
+function createPresentationSlide() {
+  return { items: [] };
+}
+
+function createPresentationHorizontal() {
+  return { verticals: [createPresentationSlide()] };
+}
+
+function currentPresentationSlide(model) {
+  if (!model.horizontals.length) model.horizontals.push(createPresentationHorizontal());
+  const horizontal = model.horizontals[model.horizontals.length - 1];
+  if (!horizontal.verticals.length) horizontal.verticals.push(createPresentationSlide());
+  return horizontal.verticals[horizontal.verticals.length - 1];
+}
+
+function notebookPresentationItem(cell, index, role) {
+  return {
+    sourceKind: "notebook",
+    kind: cell.cell_type || "raw",
+    role,
+    source: cell.source || "",
+    attachments: cell.attachments || null,
+    sourceIndex: index,
+    sourceId: cell.id || `cell-${index}`,
+    cell,
+  };
+}
+
+function buildNotebookPresentationModel() {
+  const model = createPresentationModel("notebook");
   (notebookDocument?.cells || []).forEach((cell, index) => {
     const role = notebookSlideRole(cell);
     if (role === "skip") return;
-    if (role === "slide" || !currentVertical) {
-      groups.push([[]]);
-      currentVertical = groups[groups.length - 1][0];
+
+    if (role === "slide" || !model.horizontals.length) {
+      model.horizontals.push(createPresentationHorizontal());
     } else if (role === "subslide") {
-      if (!groups.length) groups.push([[]]);
-      groups[groups.length - 1].push([]);
-      currentVertical = groups[groups.length - 1][groups[groups.length - 1].length - 1];
+      const horizontal = model.horizontals[model.horizontals.length - 1] || createPresentationHorizontal();
+      if (!model.horizontals.length) model.horizontals.push(horizontal);
+      horizontal.verticals.push(createPresentationSlide());
     }
-    currentVertical = currentVertical || ensurePresentationGroup(groups);
-    currentVertical.push({ cell, index, role });
+
+    currentPresentationSlide(model).items.push(notebookPresentationItem(cell, index, role));
   });
-  return groups;
+  return model;
 }
 
-function notebookSlidePreviewEntries(index) {
-  if (!notebookDocument?.cells[index]) return null;
-  const groups = presentationGroups();
-  for (let horizontalIndex = 0; horizontalIndex < groups.length; horizontalIndex += 1) {
-    const verticalSlides = groups[horizontalIndex];
-    for (let verticalIndex = 0; verticalIndex < verticalSlides.length; verticalIndex += 1) {
-      const entries = verticalSlides[verticalIndex];
-      if (entries.some(entry => entry.index === index)) {
-        return { entries, horizontalIndex, verticalIndex };
+function findPresentationItemLocation(model, predicate) {
+  for (let horizontalIndex = 0; horizontalIndex < model.horizontals.length; horizontalIndex += 1) {
+    const horizontal = model.horizontals[horizontalIndex];
+    for (let verticalIndex = 0; verticalIndex < horizontal.verticals.length; verticalIndex += 1) {
+      const slide = horizontal.verticals[verticalIndex];
+      if (slide.items.some(predicate)) {
+        return { slide, horizontalIndex, verticalIndex };
       }
     }
   }
   return null;
+}
+
+function notebookSlidePreviewEntries(index) {
+  if (!notebookDocument?.cells[index]) return null;
+  const model = buildNotebookPresentationModel();
+  const location = findPresentationItemLocation(model, item => item.sourceIndex === index);
+  if (!location) return null;
+  return { ...location, entries: location.slide.items };
 }
 
 function updateNotebookSlidePreviewScale() {
@@ -3162,7 +3201,7 @@ function renderNotebookSlidePreview() {
     updateNotebookSlidePreviewScale();
     return;
   }
-  location.entries.forEach(entry => renderPresentationCell(entry, notebookSlidePreviewCanvas));
+  renderPresentationSlide(location.slide, notebookSlidePreviewCanvas);
   const role = notebookSlideRole(selectedCell);
   const roleLabel = NOTEBOOK_SLIDE_ROLES.find(([value]) => value === role)?.[1] || "Slide";
   const verticalSuffix = location.verticalIndex ? ` · sub-slide ${location.verticalIndex + 1}` : "";
@@ -3205,49 +3244,63 @@ function toggleNotebookSlidePreview() {
   setNotebookSlidePreviewVisible(!notebookSlidePreviewVisible);
 }
 
-function renderPresentationCell(entry, container) {
-  const { cell, index, role } = entry;
+function renderPresentationItem(item, container) {
+  const { role } = item;
   if (role === "notes") {
     const notes = document.createElement("aside");
     notes.className = "notes";
-    notes.dataset.presentationCellId = cell.id;
-    if (cell.cell_type === "markdown") renderPresentationMarkdown(cell, notes);
-    else notes.textContent = cell.source || "";
+    if (item.sourceId) notes.dataset.presentationCellId = item.sourceId;
+    if (item.kind === "markdown") renderPresentationMarkdownSource(item.source, notes, item.attachments);
+    else notes.textContent = item.source || "";
     container.appendChild(notes);
     return;
   }
+
   const wrapper = document.createElement("div");
   wrapper.className = "notebook-presentation-cell";
-  wrapper.dataset.presentationCellId = cell.id;
+  if (item.sourceId) wrapper.dataset.presentationCellId = item.sourceId;
   if (role === "fragment") wrapper.classList.add("fragment");
-  if (cell.cell_type === "markdown") renderPresentationMarkdown(cell, wrapper);
-  else if (cell.cell_type === "code") renderPresentationCode(cell, index, wrapper);
-  else {
+
+  if (item.kind === "markdown") {
+    renderPresentationMarkdownSource(item.source, wrapper, item.attachments);
+  } else if (item.kind === "code" && item.cell) {
+    renderPresentationCode(item.cell, item.sourceIndex, wrapper);
+  } else {
     const pre = document.createElement("pre");
-    pre.textContent = cell.source || "";
+    pre.textContent = item.source || "";
     wrapper.appendChild(pre);
   }
   container.appendChild(wrapper);
 }
 
-function buildNotebookPresentationSlides() {
+function renderPresentationSlide(slide, container) {
+  slide.items.forEach(item => renderPresentationItem(item, container));
+}
+
+function renderPresentationModelSlides(model) {
   notebookRevealSlides.innerHTML = "";
-  const groups = presentationGroups();
-  if (!groups.length) {
+  if (!model.horizontals.length) {
     const section = document.createElement("section");
-    section.innerHTML = "<h2>Empty presentation</h2><p>Add notebook cells or change cells from Skip.</p>";
+    section.innerHTML = model.sourceKind === "markdown"
+      ? "<h2>Empty presentation</h2><p>Add Markdown slides separated by <code>---</code>.</p>"
+      : "<h2>Empty presentation</h2><p>Add notebook cells or change cells from Skip.</p>";
     notebookRevealSlides.appendChild(section);
     return;
   }
-  groups.forEach(verticalSlides => {
+
+  model.horizontals.forEach(horizontalModel => {
     const horizontal = document.createElement("section");
-    verticalSlides.forEach(entries => {
+    horizontalModel.verticals.forEach(slideModel => {
       const slide = document.createElement("section");
-      entries.forEach(entry => renderPresentationCell(entry, slide));
+      renderPresentationSlide(slideModel, slide);
       horizontal.appendChild(slide);
     });
     notebookRevealSlides.appendChild(horizontal);
   });
+}
+
+function buildNotebookPresentationSlides() {
+  renderPresentationModelSlides(buildNotebookPresentationModel());
 }
 
 function presentationMarkdownBody(source) {
@@ -3286,22 +3339,63 @@ function splitPresentationMarkdown(source) {
   return slides.filter((slide, index) => slide || slides.length === 1 || index === 0);
 }
 
-function buildMarkdownPresentationSlides() {
-  notebookRevealSlides.innerHTML = "";
-  const slides = splitPresentationMarkdown(editor.value);
-  if (!slides.length || slides.every(slide => !slide.trim())) {
-    const section = document.createElement("section");
-    section.innerHTML = "<h2>Empty presentation</h2><p>Add Markdown slides separated by <code>---</code>.</p>";
-    notebookRevealSlides.appendChild(section);
-    return;
-  }
-  slides.forEach(source => {
-    const horizontal = document.createElement("section");
-    const slide = document.createElement("section");
-    renderPresentationMarkdownSource(source, slide);
-    horizontal.appendChild(slide);
-    notebookRevealSlides.appendChild(horizontal);
+function markdownPresentationItem(source, index) {
+  return {
+    sourceKind: "markdown",
+    kind: "markdown",
+    role: "slide",
+    source,
+    attachments: null,
+    sourceIndex: index,
+    sourceId: `markdown-slide-${index}`,
+  };
+}
+
+function buildMarkdownPresentationModel(source = editor.value) {
+  const model = createPresentationModel("markdown");
+  splitPresentationMarkdown(source).forEach((slideSource, index) => {
+    const horizontal = createPresentationHorizontal();
+    horizontal.verticals[0].items.push(markdownPresentationItem(slideSource, index));
+    model.horizontals.push(horizontal);
   });
+  return model;
+}
+
+function currentPresentationModel() {
+  const kind = currentPresentationKind();
+  if (kind === "notebook") return buildNotebookPresentationModel();
+  if (kind === "markdown") return buildMarkdownPresentationModel(editor.value);
+  return createPresentationModel("");
+}
+
+function markdownPresentationSlideIndexAtCursor(source, cursorPosition) {
+  const prefix = String(source || "").slice(0, Math.max(0, cursorPosition || 0));
+  return Math.max(0, splitPresentationMarkdown(prefix).length - 1);
+}
+
+function renderMarkdownPresentationPreview() {
+  const model = buildMarkdownPresentationModel(editor.value);
+  const requested = markdownPresentationSlideIndexAtCursor(editor.value, editor.selectionStart);
+  const horizontalIndex = Math.min(requested, Math.max(0, model.horizontals.length - 1));
+  const slide = model.horizontals[horizontalIndex]?.verticals?.[0] || null;
+  markdownPreview.innerHTML = "";
+  markdownPreview.classList.add("presentation-markdown-preview");
+  if (slide) renderPresentationSlide(slide, markdownPreview);
+  else markdownPreview.innerHTML = '<div class="notebook-slide-preview-empty">Add Markdown slides separated by <code>---</code>.</div>';
+  buildMarkdownOutline();
+}
+
+function updateMarkdownPresentationCursorPreview() {
+  if (workbenchPurpose !== "presentations" || currentPresentationKind() !== "markdown") return;
+  renderMarkdownPresentationPreview();
+}
+
+function buildMarkdownPresentationSlides() {
+  renderPresentationModelSlides(buildMarkdownPresentationModel(editor.value));
+}
+
+function buildCurrentPresentationSlides() {
+  renderPresentationModelSlides(currentPresentationModel());
 }
 
 async function startRevealPresentation({ statusText }) {
@@ -3327,7 +3421,7 @@ async function openMarkdownPresentation() {
     return;
   }
   if (dirty) await saveCurrentFile();
-  buildMarkdownPresentationSlides();
+  buildCurrentPresentationSlides();
   notebookPresentationTitle.textContent = basename(currentFile);
   notebookPresentationStatus.textContent = "Standalone Markdown · local Reveal.js · --- separates slides";
   await startRevealPresentation({ statusText: `Presenting ${currentFile}` });
@@ -3340,7 +3434,7 @@ async function openNotebookPresentation() {
     return;
   }
   if (dirty) await saveCurrentNotebook();
-  buildNotebookPresentationSlides();
+  buildCurrentPresentationSlides();
   notebookPresentationTitle.textContent = basename(currentFile);
   notebookPresentationStatus.textContent = "Live notebook · same Python kernel · exports never execute cells";
   await startRevealPresentation({ statusText: `Presenting ${currentFile}` });
@@ -4402,8 +4496,14 @@ editor.addEventListener("pointerdown", () => {
     claimDocumentEditor();
   }
 });
-editor.addEventListener("click", updateCursorStatus);
-editor.addEventListener("keyup", updateCursorStatus);
+editor.addEventListener("click", () => {
+  updateCursorStatus();
+  updateMarkdownPresentationCursorPreview();
+});
+editor.addEventListener("keyup", () => {
+  updateCursorStatus();
+  updateMarkdownPresentationCursorPreview();
+});
 
 editor.addEventListener("beforeinput", event => {
   if (event.inputType === "historyUndo") {

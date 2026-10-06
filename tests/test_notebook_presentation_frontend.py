@@ -91,13 +91,30 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('/^\\s*---\\s*$/.test(line)', javascript)
         self.assertIn('function buildMarkdownPresentationSlides()', javascript)
         self.assertIn('function openMarkdownPresentation()', javascript)
-        self.assertIn('renderPresentationMarkdownSource(source, slide)', javascript)
+        self.assertIn('renderPresentationModelSlides(buildMarkdownPresentationModel(editor.value))', javascript)
         self.assertIn('Standalone Markdown · local Reveal.js · --- separates slides', javascript)
         self.assertIn('openFile(item.path, { purposeOverride: "documents" })', javascript)
         self.assertIn('openFile(item.path, { purposeOverride: "presentations" })', javascript)
         self.assertIn('isPresentationMarkdownPath(currentFile)', javascript)
         self.assertIn('markdownReady', javascript)
         self.assertIn('openMarkdownPresentation().catch', javascript)
+
+
+    def test_notebook_and_markdown_share_one_internal_presentation_model(self):
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('function createPresentationModel(sourceKind)', javascript)
+        self.assertIn('function buildNotebookPresentationModel()', javascript)
+        self.assertIn('function buildMarkdownPresentationModel(source = editor.value)', javascript)
+        self.assertIn('function currentPresentationModel()', javascript)
+        self.assertIn('function renderPresentationModelSlides(model)', javascript)
+        self.assertIn('function renderPresentationSlide(slide, container)', javascript)
+        self.assertIn('function findPresentationItemLocation(model, predicate)', javascript)
+        self.assertIn('renderPresentationSlide(location.slide, notebookSlidePreviewCanvas)', javascript)
+        self.assertIn('function renderMarkdownPresentationPreview()', javascript)
+        self.assertIn('renderPresentationSlide(slide, markdownPreview)', javascript)
+        self.assertIn('buildCurrentPresentationSlides();', javascript)
+        self.assertIn('role === "fragment"', javascript)
+        self.assertIn('role === "notes"', javascript)
 
     def test_export_ui_is_preflighted_and_non_executing(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
