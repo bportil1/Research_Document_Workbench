@@ -1716,6 +1716,19 @@ button:disabled:hover {
   border-left: 3px solid #4b87b7;
 }
 
+.presentation-export-result-main {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.presentation-export-warnings {
+  margin: 8px 0 0 18px;
+  padding: 0;
+  color: #7a4a10;
+}
+
 .notebook-export-actions {
   display: flex;
   justify-content: flex-end;

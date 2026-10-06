@@ -126,6 +126,22 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('builds/presentations/', javascript)
         self.assertIn('presentationExportBtn.disabled = !(notebookReady || markdownReady);', javascript)
 
+    def test_presentation_backup_and_export_workflow_is_explicit_and_paired(self):
+        html = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn('id="presentationBackupBtn"', html)
+        self.assertIn('id="presentationExportTitle"', html)
+        self.assertIn('id="presentationExportSubtitle"', html)
+
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('function createPresentationBackup()', javascript)
+        self.assertIn('location: "adjacent"', javascript)
+        self.assertIn('location: "build"', javascript)
+        self.assertIn('function renderPresentationTransferResult(result', javascript)
+        self.assertIn('presentation-export-warnings', javascript)
+        self.assertIn('openPresentationTransferDialog().catch', javascript)
+        self.assertIn('Presentation · Workbench Markdown (.slides.md)', javascript)
+        self.assertIn('Presentation · Notebook (.ipynb)', javascript)
+
     def test_export_ui_is_preflighted_and_non_executing(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
         self.assertIn('Checking export capabilities', javascript)

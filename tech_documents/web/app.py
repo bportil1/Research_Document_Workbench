@@ -300,6 +300,7 @@ def convert_presentation(project: str, filename: str) -> Response:
             filename,
             target=str(payload.get("target", "")),
             output_name=str(payload.get("output_name", "") or "") or None,
+            location=str(payload.get("location", "build") or "build"),
         )
     except DocumentEngineError as exc:
         return _json_engine_error(exc)

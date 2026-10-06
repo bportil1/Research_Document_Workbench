@@ -46,3 +46,41 @@ class PresentationTransferTests(unittest.TestCase):
         self.assertEqual(nb.cells[0].metadata.slideshow.slide_type, "slide")
         self.assertEqual(nb.cells[1].metadata.slideshow.slide_type, "fragment")
         self.assertEqual(nb.cells[0].source, "# One")
+
+    def test_adjacent_backup_creates_paired_artifact_without_overwrite(self):
+        self.engine.create_file(self.project, "talk.ipynb")
+        result = self.engine.convert_presentation(
+            self.project,
+            "talk.ipynb",
+            target="markdown",
+            location="adjacent",
+        )
+        self.assertEqual(result["path"], "talk.slides.md")
+        self.assertEqual(result["location"], "adjacent")
+        self.assertTrue((self.engine.project_path(self.project) / "talk.slides.md").is_file())
+        with self.assertRaises(Exception) as raised:
+            self.engine.convert_presentation(
+                self.project,
+                "talk.ipynb",
+                target="markdown",
+                location="adjacent",
+            )
+        self.assertIn("already exists", str(raised.exception))
+
+    def test_conversion_reports_static_fallback_warnings(self):
+        self.engine.create_file(self.project, "warn.ipynb")
+        data = self.engine.read_notebook(self.project, "warn.ipynb")["notebook"]
+        data["cells"] = [
+            {
+                "cell_type": "code",
+                "id": "code",
+                "metadata": {},
+                "source": "print('x')",
+                "execution_count": 1,
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": "x\\n"}],
+            }
+        ]
+        self.engine.save_notebook(self.project, "warn.ipynb", data)
+        result = self.engine.convert_presentation(self.project, "warn.ipynb", target="markdown")
+        self.assertTrue(result["details"]["warnings"])
+        self.assertIn("static Markdown fallbacks", result["details"]["warnings"][0])

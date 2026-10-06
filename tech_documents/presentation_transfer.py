@@ -96,7 +96,17 @@ def notebook_to_presentation_markdown(notebook_path: Path, destination: Path) ->
     front = "---\npresentation: true\nformat: workbench-slides\n---\n\n"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(front + "\n\n---\n\n".join(blocks) + "\n", encoding="utf-8")
-    return {"static_outputs": static_outputs, "nonportable_outputs": nonportable, "slides": len(blocks)}
+    warnings: list[str] = []
+    if static_outputs:
+        warnings.append(f"{static_outputs} stored notebook output(s) were preserved as static Markdown fallbacks.")
+    if nonportable:
+        warnings.append(f"{nonportable} notebook output(s) could not be represented in portable Markdown and were omitted.")
+    return {
+        "static_outputs": static_outputs,
+        "nonportable_outputs": nonportable,
+        "slides": len(blocks),
+        "warnings": warnings,
+    }
 
 
 def presentation_markdown_to_notebook(markdown_path: Path, destination: Path) -> dict[str, Any]:
@@ -124,4 +134,10 @@ def presentation_markdown_to_notebook(markdown_path: Path, destination: Path) ->
     })
     destination.parent.mkdir(parents=True, exist_ok=True)
     nbformat.write(notebook, destination)
-    return {"slides": len(cells), "static_only": True}
+    return {
+        "slides": len(cells),
+        "static_only": True,
+        "warnings": [
+            "The generated notebook is a static presentation backup; Markdown conversion does not recreate executable kernel state or interactive widgets."
+        ],
+    }

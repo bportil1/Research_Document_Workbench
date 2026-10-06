@@ -36,6 +36,7 @@ const presentationsPurposeBtn = document.getElementById("presentationsPurposeBtn
 const presentationToolbar = document.getElementById("presentationToolbar");
 const presentationKindLabel = document.getElementById("presentationKindLabel");
 const presentationPresentBtn = document.getElementById("presentationPresentBtn");
+const presentationBackupBtn = document.getElementById("presentationBackupBtn");
 const presentationExportBtn = document.getElementById("presentationExportBtn");
 const toggleFormattingBtn = document.getElementById("toggleFormattingBtn");
 const formattingControls = document.getElementById("formattingControls");
@@ -55,6 +56,8 @@ const notebookRevealSlides = document.getElementById("notebookRevealSlides");
 const notebookPresentationTitle = document.getElementById("notebookPresentationTitle");
 const notebookPresentationStatus = document.getElementById("notebookPresentationStatus");
 const notebookExportDialog = document.getElementById("notebookExportDialog");
+const presentationExportTitle = document.getElementById("presentationExportTitle");
+const presentationExportSubtitle = document.getElementById("presentationExportSubtitle");
 const notebookExportPreflight = document.getElementById("notebookExportPreflight");
 const notebookExportFormat = document.getElementById("notebookExportFormat");
 const notebookExportName = document.getElementById("notebookExportName");
@@ -2492,12 +2495,20 @@ function updatePresentationPurposeUI() {
         ? "Open this Markdown file as a standalone Reveal presentation"
         : "Open a notebook or Markdown presentation first";
   }
+  if (presentationBackupBtn) {
+    presentationBackupBtn.disabled = !(notebookReady || markdownReady);
+    presentationBackupBtn.title = notebookReady
+      ? "Create a .slides.md backup beside this notebook"
+      : markdownReady
+        ? "Create an .ipynb backup beside this Markdown presentation"
+        : "Open a notebook or Markdown presentation first";
+  }
   if (presentationExportBtn) {
     presentationExportBtn.disabled = !(notebookReady || markdownReady);
     presentationExportBtn.title = notebookReady
-      ? "Export or convert this notebook presentation"
+      ? "Export this presentation or create a named presentation backup"
       : markdownReady
-        ? "Convert this Markdown presentation to a notebook backup"
+        ? "Export or convert this Markdown presentation"
         : "Open a notebook or Markdown presentation first";
   }
 
@@ -3477,7 +3488,18 @@ function renderNotebookExportPreflight(capabilities) {
 }
 
 function updateNotebookExportSelection() {
-  const selected = notebookExportCapabilities?.formats?.find(item => item.id === notebookExportFormat.value);
+  const transferValue = notebookExportFormat.value;
+  if (transferValue === "workbench-presentation-markdown") {
+    notebookExportDescription.textContent = "Presentation Markdown backup (.slides.md). Unlike Markdown Document export, this preserves Workbench slide boundaries and supported slide roles.";
+    notebookExportRunBtn.disabled = false;
+    return;
+  }
+  if (transferValue === "workbench-presentation-notebook") {
+    notebookExportDescription.textContent = "Static presentation notebook (.ipynb). Markdown slide boundaries become notebook cells and supported slide roles are restored.";
+    notebookExportRunBtn.disabled = false;
+    return;
+  }
+  const selected = notebookExportCapabilities?.formats?.find(item => item.id === transferValue);
   if (!selected) {
     notebookExportDescription.textContent = "";
     notebookExportRunBtn.disabled = true;
@@ -3489,30 +3511,91 @@ function updateNotebookExportSelection() {
   notebookExportRunBtn.disabled = !selected.available;
 }
 
-async function openPresentationTransferDialog() {
+function setPresentationExportDialogCopy(kind) {
+  if (presentationExportTitle) presentationExportTitle.textContent = "Export Presentation";
+  if (presentationExportSubtitle) {
+    presentationExportSubtitle.textContent = kind === "notebook"
+      ? "Use stored notebook outputs only. Presentation exports never execute cells."
+      : "Create a portable notebook backup from this Markdown presentation.";
+  }
+}
+
+function renderPresentationTransferResult(result, { verb = "Created" } = {}) {
+  notebookExportResult.innerHTML = "";
+  const message = document.createElement("div");
+  message.className = "presentation-export-result-main";
+  const label = document.createElement("span");
+  label.textContent = `${verb} ${result.path} `;
+  const link = document.createElement("a");
+  link.href = result.download_url;
+  link.textContent = "Download";
+  link.target = "_blank";
+  message.append(label, link);
+  notebookExportResult.appendChild(message);
+  const warnings = result.details?.warnings || [];
+  if (warnings.length) {
+    const list = document.createElement("ul");
+    list.className = "presentation-export-warnings";
+    warnings.forEach(warning => {
+      const item = document.createElement("li");
+      item.textContent = warning;
+      list.appendChild(item);
+    });
+    notebookExportResult.appendChild(list);
+  }
+}
+
+async function createPresentationBackup() {
   const kind = currentPresentationKind();
   if (!currentFile || !kind) return;
   if (kind === "notebook") {
-    await openNotebookExportDialog();
+    if (dirty) await saveCurrentNotebook();
+  } else if (dirty) {
+    await saveCurrentFile();
+  }
+  const target = kind === "notebook" ? "markdown" : "notebook";
+  presentationBackupBtn.disabled = true;
+  setStatus(`Creating adjacent ${target} presentation backup…`);
+  try {
+    const result = await api(`/api/presentations/${encodeURIComponent(currentProject)}/${currentFile.split("/").map(encodeURIComponent).join("/")}/convert`, {
+      method: "POST",
+      body: JSON.stringify({ target, location: "adjacent" }),
+    });
+    await loadProjects(currentProject, currentFile);
+    const warnings = result.details?.warnings || [];
+    setStatus(`Created presentation backup ${result.path}${warnings.length ? ` · ${warnings.join(" ")}` : ""}`);
+  } finally {
+    presentationBackupBtn.disabled = false;
+  }
+}
+
+async function openPresentationTransferDialog() {
+  const kind = currentPresentationKind();
+  if (!currentFile || !kind) return;
+  setPresentationExportDialogCopy(kind);
+  if (kind === "notebook") {
+    await openNotebookExportDialog({ presentationMode: true });
     const option = document.createElement("option");
     option.value = "workbench-presentation-markdown";
-    option.textContent = "Presentation · Workbench Markdown backup (.slides.md)";
+    option.textContent = "Presentation · Workbench Markdown (.slides.md)";
     notebookExportFormat.appendChild(option);
     return;
   }
   if (dirty) await saveCurrentFile();
+  notebookExportCapabilities = null;
   notebookExportPreflight.innerHTML = "";
-  notebookExportFormat.innerHTML = '<option value="workbench-presentation-notebook">Presentation · Notebook backup (.ipynb)</option>';
+  notebookExportFormat.innerHTML = '<option value="workbench-presentation-notebook">Presentation · Notebook (.ipynb)</option>';
   notebookExportName.value = basename(currentFile).replace(/\.slides\.md$/i, "").replace(/\.md$/i, "");
-  notebookExportDescription.textContent = "Creates a static notebook backup. Markdown slide boundaries become notebook cells; Workbench role comments are restored when present.";
-  notebookExportResult.textContent = "Conversion writes to builds/presentations/.";
+  notebookExportDescription.textContent = "Creates a static notebook presentation. Slide boundaries become notebook cells and supported Workbench slide roles are restored.";
+  notebookExportResult.textContent = "Named presentation conversions are written to builds/presentations/. Use Backup for the paired file beside the source.";
   notebookExportRunBtn.disabled = false;
   notebookExportDialog.showModal();
 }
 
-async function openNotebookExportDialog() {
+async function openNotebookExportDialog({ presentationMode = false } = {}) {
   if (!notebookDocument || !currentFile) return;
   if (dirty) await saveCurrentNotebook();
+  if (presentationMode) setPresentationExportDialogCopy("notebook");
   notebookExportResult.textContent = "Checking export capabilities…";
   notebookExportCapabilities = await api(`${notebookApiUrl()}/exports`);
   renderNotebookExportPreflight(notebookExportCapabilities);
@@ -3521,13 +3604,16 @@ async function openNotebookExportDialog() {
     const option = document.createElement("option");
     option.value = format.id;
     option.disabled = !format.available;
-    option.textContent = `${format.kind === "presentation" ? "Presentation" : "Document"} · ${format.label}${format.available ? "" : " — unavailable"}`;
+    const category = format.kind === "presentation" ? "Presentation" : "Document";
+    option.textContent = `${category} · ${format.label}${format.available ? "" : " — unavailable"}`;
     notebookExportFormat.appendChild(option);
   });
-  const firstAvailable = notebookExportCapabilities.formats.find(item => item.available);
-  if (firstAvailable) notebookExportFormat.value = firstAvailable.id;
+  const preferred = notebookExportCapabilities.formats.find(item => item.id === "reveal" && item.available)
+    || notebookExportCapabilities.formats.find(item => item.kind === "presentation" && item.available)
+    || notebookExportCapabilities.formats.find(item => item.available);
+  if (preferred) notebookExportFormat.value = preferred.id;
   notebookExportName.value = basename(currentFile).replace(/\.ipynb$/i, "");
-  notebookExportResult.textContent = "Exports are written to builds/notebooks/ and use stored outputs only.";
+  notebookExportResult.textContent = "Exports are written to builds/notebooks/ and use stored outputs only. Presentation Markdown is a separate backup format and preserves slide semantics.";
   updateNotebookExportSelection();
   notebookExportDialog.showModal();
 }
@@ -3541,19 +3627,12 @@ async function runNotebookExport() {
     try {
       const result = await api(`/api/presentations/${encodeURIComponent(currentProject)}/${currentFile.split("/").map(encodeURIComponent).join("/")}/convert`, {
         method: "POST",
-        body: JSON.stringify({ target, output_name: notebookExportName.value.trim() }),
+        body: JSON.stringify({ target, output_name: notebookExportName.value.trim(), location: "build" }),
       });
-      notebookExportResult.innerHTML = "";
-      const message = document.createElement("span");
-      const details = result.details || {};
-      message.textContent = `Created ${result.path}${details.nonportable_outputs ? ` · ${details.nonportable_outputs} non-portable output(s) omitted` : ""} `;
-      const link = document.createElement("a");
-      link.href = result.download_url;
-      link.textContent = "Download";
-      link.target = "_blank";
-      notebookExportResult.append(message, link);
+      renderPresentationTransferResult(result);
       await loadProjects(currentProject, currentFile);
-      setStatus(`Created presentation backup ${result.path}`);
+      const warningCount = result.details?.warnings?.length || 0;
+      setStatus(`Created presentation export ${result.path}${warningCount ? ` · ${warningCount} warning(s)` : ""}`);
     } finally {
       notebookExportRunBtn.disabled = false;
     }
@@ -4778,10 +4857,10 @@ presentationPresentBtn?.addEventListener("click", () => {
     openMarkdownPresentation().catch(error => setStatus(`Presentation failed: ${error.message}`));
   }
 });
-presentationExportBtn?.addEventListener("click", () => {
-  if (currentPresentationKind() !== "notebook") return;
-  openNotebookExportDialog().catch(error => setStatus(`Export setup failed: ${error.message}`));
-});
+presentationBackupBtn?.addEventListener("click", () =>
+  createPresentationBackup().catch(error => setStatus(`Backup failed: ${error.message}`)));
+presentationExportBtn?.addEventListener("click", () =>
+  openPresentationTransferDialog().catch(error => setStatus(`Export setup failed: ${error.message}`)));
 document.getElementById("notebookPresentationCloseBtn")?.addEventListener("click", () =>
   closeNotebookPresentation().catch(error => setStatus(error.message)));
 document.getElementById("notebookPresentationPrevBtn")?.addEventListener("click", () => notebookRevealDeck?.prev());

@@ -93,6 +93,7 @@
         </div>
         <div class="presentation-toolbar-actions">
           <button id="presentationPresentBtn" type="button" class="primary">Present</button>
+          <button id="presentationBackupBtn" type="button" title="Create the alternate .ipynb/.slides.md presentation beside the current source">Backup</button>
           <button id="presentationExportBtn" type="button">Export…</button>
         </div>
       </div>
@@ -353,8 +354,8 @@
     <form method="dialog" class="notebook-export-shell">
       <div class="notebook-export-header">
         <div>
-          <h2>Export Notebook</h2>
-          <p>Use stored notebook outputs. Exporting never executes cells.</p>
+          <h2 id="presentationExportTitle">Export Presentation</h2>
+          <p id="presentationExportSubtitle">Create presentation exports or alternate-format backups without executing notebook cells.</p>
         </div>
         <button value="cancel" aria-label="Close export dialog">×</button>
       </div>

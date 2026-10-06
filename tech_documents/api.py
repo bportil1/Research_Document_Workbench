@@ -522,32 +522,48 @@ class DocumentEngine:
         *,
         target: str,
         output_name: str | None = None,
+        location: str = "build",
     ) -> dict[str, Any]:
         source = self.editable_file_path(project, filename)
         if not source.exists() or not source.is_file():
             raise ItemNotFoundError("Presentation source does not exist.")
         project_root = self.project_path(project).resolve()
-        output_dir = project_root / "builds" / "presentations"
+        if location not in {"build", "adjacent"}:
+            raise DocumentEngineError("Presentation conversion location must be 'build' or 'adjacent'.")
+        output_dir = source.parent if location == "adjacent" else project_root / "builds" / "presentations"
         output_dir.mkdir(parents=True, exist_ok=True)
-        safe = self.notebook_exports._safe_stem(output_name or source.name.replace(".slides.md", "").replace(source.suffix, ""))
+
+        source_base = source.name[:-10] if source.name.lower().endswith(".slides.md") else source.stem
+        safe = self.notebook_exports._safe_stem(output_name or source_base)
         if target == "markdown":
             if source.suffix.lower() not in NOTEBOOK_EXTENSIONS:
                 raise UnsupportedFileTypeError("Markdown presentation conversion requires a .ipynb source.")
             destination = output_dir / f"{safe}.slides.md"
-            details = notebook_to_presentation_markdown(source, destination)
+            convert = notebook_to_presentation_markdown
         elif target == "notebook":
             if source.suffix.lower() != ".md":
                 raise UnsupportedFileTypeError("Notebook presentation conversion requires a Markdown source.")
             destination = output_dir / f"{safe}.ipynb"
-            details = presentation_markdown_to_notebook(source, destination)
+            convert = presentation_markdown_to_notebook
         else:
             raise DocumentEngineError("Presentation target must be 'markdown' or 'notebook'.")
+
+        if destination.resolve() == source.resolve():
+            raise ItemConflictError("Presentation conversion cannot overwrite its source file.")
+        if location == "adjacent" and destination.exists():
+            raise ItemConflictError(
+                f"Presentation backup already exists: {relative_to_project(project_root, destination)}. "
+                "Rename or remove it, or use Export… with a different output name."
+            )
+
+        details = convert(source, destination)
         return {
             "ok": True,
             "target": target,
             "path": relative_to_project(project_root, destination),
             "size": destination.stat().st_size,
             "details": details,
+            "location": location,
         }
 
     def create_folder(self, project: str, path: str) -> str:
