@@ -142,6 +142,22 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('Presentation · Workbench Markdown (.slides.md)', javascript)
         self.assertIn('Presentation · Notebook (.ipynb)', javascript)
 
+
+    def test_markdown_backup_roles_feed_the_same_live_presentation_model(self):
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('WORKBENCH_MARKDOWN_ROLE_RE', javascript)
+        self.assertIn('function parsePresentationMarkdownBlock(source, index)', javascript)
+        self.assertIn('if (parsed.role === "skip") return;', javascript)
+        self.assertIn('parsed.role === "subslide"', javascript)
+        self.assertIn('markdownPresentationItem(parsed.source, parsed.sourceIndex, parsed.role)', javascript)
+        self.assertIn('currentPresentationSlide(model).items.push', javascript)
+
+    def test_ordinary_markdown_remains_document_first_while_slides_md_is_presentation_first(self):
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('isPresentationMarkdownPath(currentFile)', javascript)
+        self.assertIn('openFile(item.path, { purposeOverride: "documents" })', javascript)
+        self.assertIn('openFile(item.path, { purposeOverride: "presentations" })', javascript)
+
     def test_export_ui_is_preflighted_and_non_executing(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
         self.assertIn('Checking export capabilities', javascript)

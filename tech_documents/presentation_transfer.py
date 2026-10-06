@@ -10,15 +10,29 @@ from .errors import DocumentEngineError
 ROLE_RE = re.compile(r"^\s*<!--\s*workbench-slide-role:\s*(slide|subslide|fragment|skip|notes)\s*-->\s*$", re.I)
 
 
-def split_presentation_markdown(source: str) -> list[str]:
-    """Split standalone presentation Markdown on --- outside fenced code blocks."""
+def presentation_markdown_body(source: str) -> str:
+    """Remove leading YAML-like presentation front matter when it is actually metadata."""
     text = str(source or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
-    if lines and lines[0].strip() == "---":
-        for i in range(1, min(len(lines), 80)):
-            if lines[i].strip() == "---":
-                lines = lines[i + 1 :]
-                break
+    if not lines or lines[0].strip() != "---":
+        return text
+    closing: int | None = None
+    for i in range(1, min(len(lines), 80)):
+        if lines[i].strip() == "---":
+            closing = i
+            break
+    if closing is None:
+        return text
+    metadata_lines = lines[1:closing]
+    looks_like_front_matter = any(
+        re.match(r"^[A-Za-z0-9_-]+\s*:", line.strip()) for line in metadata_lines
+    )
+    return "\n".join(lines[closing + 1 :]) if looks_like_front_matter else text
+
+
+def split_presentation_markdown(source: str) -> list[str]:
+    """Split standalone presentation Markdown on --- outside fenced code blocks."""
+    lines = presentation_markdown_body(source).split("\n")
     slides: list[list[str]] = [[]]
     fence: str | None = None
     for line in lines:

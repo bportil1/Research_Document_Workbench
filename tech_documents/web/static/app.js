@@ -3350,11 +3350,27 @@ function splitPresentationMarkdown(source) {
   return slides.filter((slide, index) => slide || slides.length === 1 || index === 0);
 }
 
-function markdownPresentationItem(source, index) {
+const WORKBENCH_MARKDOWN_ROLE_RE = /^\s*<!--\s*workbench-slide-role:\s*(slide|subslide|fragment|skip|notes)\s*-->\s*$/i;
+
+function parsePresentationMarkdownBlock(source, index) {
+  const lines = String(source || "").split("\n");
+  let role = "slide";
+  if (lines.length) {
+    const match = lines[0].match(WORKBENCH_MARKDOWN_ROLE_RE);
+    if (match) {
+      role = match[1].toLowerCase();
+      lines.shift();
+      while (lines.length && !lines[0].trim()) lines.shift();
+    }
+  }
+  return { role, source: lines.join("\n").trimEnd(), sourceIndex: index };
+}
+
+function markdownPresentationItem(source, index, role = "slide") {
   return {
     sourceKind: "markdown",
     kind: "markdown",
-    role: "slide",
+    role,
     source,
     attachments: null,
     sourceIndex: index,
@@ -3365,9 +3381,19 @@ function markdownPresentationItem(source, index) {
 function buildMarkdownPresentationModel(source = editor.value) {
   const model = createPresentationModel("markdown");
   splitPresentationMarkdown(source).forEach((slideSource, index) => {
-    const horizontal = createPresentationHorizontal();
-    horizontal.verticals[0].items.push(markdownPresentationItem(slideSource, index));
-    model.horizontals.push(horizontal);
+    const parsed = parsePresentationMarkdownBlock(slideSource, index);
+    if (parsed.role === "skip") return;
+
+    if (parsed.role === "slide" || !model.horizontals.length) {
+      model.horizontals.push(createPresentationHorizontal());
+    } else if (parsed.role === "subslide") {
+      const horizontal = model.horizontals[model.horizontals.length - 1];
+      horizontal.verticals.push(createPresentationSlide());
+    }
+
+    currentPresentationSlide(model).items.push(
+      markdownPresentationItem(parsed.source, parsed.sourceIndex, parsed.role),
+    );
   });
   return model;
 }
