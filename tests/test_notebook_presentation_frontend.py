@@ -116,6 +116,16 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('role === "fragment"', javascript)
         self.assertIn('role === "notes"', javascript)
 
+
+    def test_presentation_cross_transfer_uses_existing_export_surface(self):
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('function openPresentationTransferDialog()', javascript)
+        self.assertIn('workbench-presentation-markdown', javascript)
+        self.assertIn('workbench-presentation-notebook', javascript)
+        self.assertIn('/api/presentations/', javascript)
+        self.assertIn('builds/presentations/', javascript)
+        self.assertIn('presentationExportBtn.disabled = !(notebookReady || markdownReady);', javascript)
+
     def test_export_ui_is_preflighted_and_non_executing(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
         self.assertIn('Checking export capabilities', javascript)

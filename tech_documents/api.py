@@ -36,6 +36,7 @@ from .errors import (
 from .notebooks import NotebookRuntime, notebook_dependencies
 from .latex_tools import parse_latex_log, preflight_latex
 from .notebook_exports import NotebookExportService
+from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
 from .paths import (
     ALLOWED_EXTENSIONS,
     NOTEBOOK_EXTENSIONS,
@@ -513,6 +514,41 @@ class DocumentEngine:
             format_id=format_id,
             output_name=output_name,
         )
+
+    def convert_presentation(
+        self,
+        project: str,
+        filename: str,
+        *,
+        target: str,
+        output_name: str | None = None,
+    ) -> dict[str, Any]:
+        source = self.editable_file_path(project, filename)
+        if not source.exists() or not source.is_file():
+            raise ItemNotFoundError("Presentation source does not exist.")
+        project_root = self.project_path(project).resolve()
+        output_dir = project_root / "builds" / "presentations"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        safe = self.notebook_exports._safe_stem(output_name or source.name.replace(".slides.md", "").replace(source.suffix, ""))
+        if target == "markdown":
+            if source.suffix.lower() not in NOTEBOOK_EXTENSIONS:
+                raise UnsupportedFileTypeError("Markdown presentation conversion requires a .ipynb source.")
+            destination = output_dir / f"{safe}.slides.md"
+            details = notebook_to_presentation_markdown(source, destination)
+        elif target == "notebook":
+            if source.suffix.lower() != ".md":
+                raise UnsupportedFileTypeError("Notebook presentation conversion requires a Markdown source.")
+            destination = output_dir / f"{safe}.ipynb"
+            details = presentation_markdown_to_notebook(source, destination)
+        else:
+            raise DocumentEngineError("Presentation target must be 'markdown' or 'notebook'.")
+        return {
+            "ok": True,
+            "target": target,
+            "path": relative_to_project(project_root, destination),
+            "size": destination.stat().st_size,
+            "details": details,
+        }
 
     def create_folder(self, project: str, path: str) -> str:
         folder_path = self.item_path(project, path)

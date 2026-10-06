@@ -2493,12 +2493,12 @@ function updatePresentationPurposeUI() {
         : "Open a notebook or Markdown presentation first";
   }
   if (presentationExportBtn) {
-    presentationExportBtn.disabled = !notebookReady;
+    presentationExportBtn.disabled = !(notebookReady || markdownReady);
     presentationExportBtn.title = notebookReady
-      ? "Export this notebook presentation"
+      ? "Export or convert this notebook presentation"
       : markdownReady
-        ? "Markdown presentation export and backup targets are implemented in Presentation Sprint P7"
-        : "Open a notebook presentation first";
+        ? "Convert this Markdown presentation to a notebook backup"
+        : "Open a notebook or Markdown presentation first";
   }
 
   if (!notebookWorkspace.hidden) {
@@ -3489,6 +3489,27 @@ function updateNotebookExportSelection() {
   notebookExportRunBtn.disabled = !selected.available;
 }
 
+async function openPresentationTransferDialog() {
+  const kind = currentPresentationKind();
+  if (!currentFile || !kind) return;
+  if (kind === "notebook") {
+    await openNotebookExportDialog();
+    const option = document.createElement("option");
+    option.value = "workbench-presentation-markdown";
+    option.textContent = "Presentation · Workbench Markdown backup (.slides.md)";
+    notebookExportFormat.appendChild(option);
+    return;
+  }
+  if (dirty) await saveCurrentFile();
+  notebookExportPreflight.innerHTML = "";
+  notebookExportFormat.innerHTML = '<option value="workbench-presentation-notebook">Presentation · Notebook backup (.ipynb)</option>';
+  notebookExportName.value = basename(currentFile).replace(/\.slides\.md$/i, "").replace(/\.md$/i, "");
+  notebookExportDescription.textContent = "Creates a static notebook backup. Markdown slide boundaries become notebook cells; Workbench role comments are restored when present.";
+  notebookExportResult.textContent = "Conversion writes to builds/presentations/.";
+  notebookExportRunBtn.disabled = false;
+  notebookExportDialog.showModal();
+}
+
 async function openNotebookExportDialog() {
   if (!notebookDocument || !currentFile) return;
   if (dirty) await saveCurrentNotebook();
@@ -3512,6 +3533,32 @@ async function openNotebookExportDialog() {
 }
 
 async function runNotebookExport() {
+  const transferValue = notebookExportFormat.value;
+  if (transferValue === "workbench-presentation-markdown" || transferValue === "workbench-presentation-notebook") {
+    notebookExportRunBtn.disabled = true;
+    const target = transferValue.endsWith("markdown") ? "markdown" : "notebook";
+    notebookExportResult.textContent = `Creating ${target} presentation backup…`;
+    try {
+      const result = await api(`/api/presentations/${encodeURIComponent(currentProject)}/${currentFile.split("/").map(encodeURIComponent).join("/")}/convert`, {
+        method: "POST",
+        body: JSON.stringify({ target, output_name: notebookExportName.value.trim() }),
+      });
+      notebookExportResult.innerHTML = "";
+      const message = document.createElement("span");
+      const details = result.details || {};
+      message.textContent = `Created ${result.path}${details.nonportable_outputs ? ` · ${details.nonportable_outputs} non-portable output(s) omitted` : ""} `;
+      const link = document.createElement("a");
+      link.href = result.download_url;
+      link.textContent = "Download";
+      link.target = "_blank";
+      notebookExportResult.append(message, link);
+      await loadProjects(currentProject, currentFile);
+      setStatus(`Created presentation backup ${result.path}`);
+    } finally {
+      notebookExportRunBtn.disabled = false;
+    }
+    return;
+  }
   const selected = notebookExportCapabilities?.formats?.find(item => item.id === notebookExportFormat.value);
   if (!selected?.available) return;
   notebookExportRunBtn.disabled = true;
