@@ -389,6 +389,10 @@ body.detached-preview-mode .editor-grid.preview .preview-pane {
   flex: 1;
 }
 
+.editor-grid[hidden] {
+  display: none !important;
+}
+
 .editor-grid.split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1143,6 +1147,111 @@ button:disabled:hover {
   font-size: 13px;
 }
 
+.notebook-authoring {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.notebook-editor-column {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.notebook-preview-resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--panel2);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.notebook-preview-resizer:hover,
+.notebook-preview-resizer.dragging {
+  background: #27465d;
+}
+
+.notebook-preview-resizer[hidden],
+.notebook-slide-preview-pane[hidden] {
+  display: none !important;
+}
+
+.notebook-slide-preview-pane {
+  width: min(42vw, 620px);
+  min-width: 280px;
+  max-width: 70%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #121a20;
+}
+
+.notebook-slide-preview-header {
+  min-height: 36px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+
+.notebook-slide-preview-header span {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+.notebook-slide-preview-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #222b32;
+}
+
+.notebook-slide-preview-canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 960px;
+  height: 700px;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 48px 58px;
+  transform-origin: center center;
+  background: #fff;
+  color: #172536;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .35);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 40px;
+  line-height: 1.2;
+}
+
+.notebook-slide-preview-canvas .notebook-presentation-markdown {
+  color: #172536;
+}
+
+.notebook-slide-preview-canvas .notebook-presentation-code-header button {
+  display: none;
+}
+
+.notebook-slide-preview-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: #617282;
+  font-size: 24px;
+  text-align: center;
+}
+
 .notebook-cells {
   flex: 1;
   overflow: auto;
@@ -1328,6 +1437,11 @@ button:disabled:hover {
   .notebook-cells {
     padding-left: 10px;
     padding-right: 10px;
+  }
+
+  .notebook-preview-resizer,
+  .notebook-slide-preview-pane {
+    display: none !important;
   }
 }
 

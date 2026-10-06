@@ -144,10 +144,24 @@
           </div>
         </div>
         <div id="notebookDependencyNotice" class="notebook-dependency-notice" hidden></div>
-        <div id="notebookCells" class="notebook-cells"></div>
-        <div class="notebook-end-controls">
-          <button id="notebookAddEndMarkdownBtn" type="button">+ Markdown cell</button>
-          <button id="notebookAddEndCodeBtn" type="button">+ Code cell</button>
+        <div id="notebookAuthoring" class="notebook-authoring">
+          <div class="notebook-editor-column">
+            <div id="notebookCells" class="notebook-cells"></div>
+            <div class="notebook-end-controls">
+              <button id="notebookAddEndMarkdownBtn" type="button">+ Markdown cell</button>
+              <button id="notebookAddEndCodeBtn" type="button">+ Code cell</button>
+            </div>
+          </div>
+          <div id="notebookPreviewResizer" class="notebook-preview-resizer" role="separator" aria-orientation="vertical" aria-label="Resize slide preview" hidden></div>
+          <aside id="notebookSlidePreviewPane" class="notebook-slide-preview-pane" aria-label="Slide preview" hidden>
+            <div class="notebook-slide-preview-header">
+              <strong>Slide Preview</strong>
+              <span id="notebookSlidePreviewStatus">Select a cell</span>
+            </div>
+            <div id="notebookSlidePreviewStage" class="notebook-slide-preview-stage">
+              <div id="notebookSlidePreviewCanvas" class="notebook-slide-preview-canvas"></div>
+            </div>
+          </aside>
         </div>
       </section>
 

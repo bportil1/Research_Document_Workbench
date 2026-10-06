@@ -35,6 +35,28 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('Run live', javascript)
         self.assertIn('refreshNotebookPresentationCell(index)', javascript)
 
+    def test_notebook_authoring_preview_is_side_by_side_collapsible_and_synchronized(self):
+        html = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn('id="notebookAuthoring"', html)
+        self.assertIn('id="notebookSlidePreviewPane"', html)
+        self.assertIn('id="notebookPreviewResizer"', html)
+        self.assertIn('id="notebookSlidePreviewCanvas"', html)
+
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('function setNotebookSlidePreviewVisible(visible)', javascript)
+        self.assertIn('function renderNotebookSlidePreview()', javascript)
+        self.assertIn('function notebookSlidePreviewEntries(index)', javascript)
+        self.assertIn('if (!notebookWorkspace.hidden) toggleNotebookSlidePreview();', javascript)
+        self.assertIn('renderNotebookSlidePreview();', javascript)
+        self.assertIn('NOTEBOOK_PREVIEW_WIDTH_STORAGE_KEY', javascript)
+
+        css = STYLES.read_text(encoding="utf-8")
+        self.assertIn('.editor-grid[hidden]', css)
+        self.assertIn('.notebook-authoring', css)
+        self.assertIn('.notebook-slide-preview-pane', css)
+        self.assertIn('.notebook-preview-resizer', css)
+        self.assertIn('.notebook-slide-preview-canvas', css)
+
     def test_export_ui_is_preflighted_and_non_executing(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
         self.assertIn('Checking export capabilities', javascript)

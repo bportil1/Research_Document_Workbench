@@ -37,6 +37,11 @@ const notebookCells = document.getElementById("notebookCells");
 const notebookFilename = document.getElementById("notebookFilename");
 const notebookKernelStatus = document.getElementById("notebookKernelStatus");
 const notebookDependencyNotice = document.getElementById("notebookDependencyNotice");
+const notebookSlidePreviewPane = document.getElementById("notebookSlidePreviewPane");
+const notebookSlidePreviewStage = document.getElementById("notebookSlidePreviewStage");
+const notebookSlidePreviewCanvas = document.getElementById("notebookSlidePreviewCanvas");
+const notebookSlidePreviewStatus = document.getElementById("notebookSlidePreviewStatus");
+const notebookPreviewResizer = document.getElementById("notebookPreviewResizer");
 const notebookPresentation = document.getElementById("notebookPresentation");
 const notebookReveal = document.getElementById("notebookReveal");
 const notebookRevealSlides = document.getElementById("notebookRevealSlides");
@@ -88,6 +93,7 @@ const latexCreateImages = document.getElementById("latexCreateImages");
 const latexSetDocumentsRoot = document.getElementById("latexSetDocumentsRoot");
 const latexProjectMessage = document.getElementById("latexProjectMessage");
 const livePreviewToggle = document.getElementById("livePreviewToggle");
+const topPreviewBtn = document.getElementById("topPreviewBtn");
 const detachedModeBadge = document.getElementById("detachedModeBadge");
 
 const startupParams = new URLSearchParams(window.location.search);
@@ -116,6 +122,7 @@ const FILES_COLLAPSED_STORAGE_KEY = "rdw.ui.filesCollapsed.v1";
 const FORMATTING_COLLAPSED_STORAGE_KEY = "rdw.ui.formattingCollapsed.v1";
 const LIVE_PREVIEW_STORAGE_KEY = "rdw.ui.livePreview.v1";
 const VIEW_MODE_STORAGE_KEY = "rdw.ui.viewMode.v1";
+const NOTEBOOK_PREVIEW_WIDTH_STORAGE_KEY = "rdw.ui.notebookPreviewWidth.v1";
 const DOCUMENT_SESSION_CHANNEL_NAME = "rdw.document-session.v1";
 const DOCUMENT_SESSION_PROTOCOL_VERSION = 1;
 const documentSessionInstanceId = (() => {
@@ -160,6 +167,9 @@ let diagramBuilderGeneration = 0;
 let diagramBuilderNormalizedSource = "";
 
 let notebookDocument = null;
+
+let notebookSlidePreviewVisible = false;
+let notebookPreviewResizeActive = false;
 let notebookSelectedIndex = -1;
 let notebookRunning = false;
 const notebookEditors = new Map();
@@ -2411,12 +2421,28 @@ async function handleContextAction(action) {
 }
 
 
+function updateTopPreviewButton() {
+  if (!topPreviewBtn) return;
+  if (!notebookWorkspace.hidden) {
+    topPreviewBtn.textContent = notebookSlidePreviewVisible ? "Hide Preview" : "Preview";
+    topPreviewBtn.title = notebookSlidePreviewVisible
+      ? "Collapse the notebook slide preview"
+      : "Show the notebook slide preview beside the cells";
+    topPreviewBtn.classList.toggle("active", notebookSlidePreviewVisible);
+    return;
+  }
+  topPreviewBtn.textContent = "Preview";
+  topPreviewBtn.title = "Show preview only";
+  topPreviewBtn.classList.remove("active");
+}
+
 function showTextWorkspace() {
   notebookWorkspace.hidden = true;
   editorGrid.hidden = false;
   textToolbar.hidden = false;
   document.getElementById("compileBtn").disabled = false;
   document.getElementById("printBtn").disabled = false;
+  updateTopPreviewButton();
 }
 
 function showNotebookWorkspace() {
@@ -2429,6 +2455,7 @@ function showNotebookWorkspace() {
   markdownPreview.style.display = "none";
   hideCompiledPdfPreview();
   compilerLog.style.display = "none";
+  updateTopPreviewButton();
 }
 
 function disposeNotebookEditor(cellId) {
@@ -2610,6 +2637,7 @@ function renderNotebookMarkdown(cell, index, body) {
       cell.source = input.value;
       markNotebookDirty();
       renderNotebookOutline();
+      renderNotebookSlidePreview();
     });
     input.addEventListener("keydown", event => {
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -2710,6 +2738,7 @@ function renderNotebookCode(cell, index, body) {
       cell.source = aceEditor.session.getValue();
       resizeAceNotebookEditor(aceEditor, host);
       markNotebookDirty();
+      renderNotebookSlidePreview();
     });
     resizeAceNotebookEditor(aceEditor, host);
   } else {
@@ -2722,6 +2751,7 @@ function renderNotebookCode(cell, index, body) {
     fallback.addEventListener("input", () => {
       cell.source = fallback.value;
       markNotebookDirty();
+      renderNotebookSlidePreview();
     });
     fallback.addEventListener("keydown", event => {
       if (event.key === "Tab") {
@@ -2973,6 +3003,89 @@ function presentationGroups() {
   return groups;
 }
 
+function notebookSlidePreviewEntries(index) {
+  if (!notebookDocument?.cells[index]) return null;
+  const groups = presentationGroups();
+  for (let horizontalIndex = 0; horizontalIndex < groups.length; horizontalIndex += 1) {
+    const verticalSlides = groups[horizontalIndex];
+    for (let verticalIndex = 0; verticalIndex < verticalSlides.length; verticalIndex += 1) {
+      const entries = verticalSlides[verticalIndex];
+      if (entries.some(entry => entry.index === index)) {
+        return { entries, horizontalIndex, verticalIndex };
+      }
+    }
+  }
+  return null;
+}
+
+function updateNotebookSlidePreviewScale() {
+  if (!notebookSlidePreviewVisible || !notebookSlidePreviewStage || !notebookSlidePreviewCanvas) return;
+  const availableWidth = Math.max(1, notebookSlidePreviewStage.clientWidth - 28);
+  const availableHeight = Math.max(1, notebookSlidePreviewStage.clientHeight - 28);
+  const scale = Math.min(availableWidth / 960, availableHeight / 700, 1);
+  notebookSlidePreviewCanvas.style.transform = `translate(-50%, -50%) scale(${scale})`;
+}
+
+function renderNotebookSlidePreview() {
+  if (!notebookSlidePreviewVisible || !notebookSlidePreviewCanvas) return;
+  notebookSlidePreviewCanvas.innerHTML = "";
+  const selectedCell = notebookDocument?.cells[notebookSelectedIndex];
+  if (!selectedCell) {
+    notebookSlidePreviewCanvas.innerHTML = '<div class="notebook-slide-preview-empty">Select a notebook cell to preview its slide.</div>';
+    if (notebookSlidePreviewStatus) notebookSlidePreviewStatus.textContent = "Select a cell";
+    updateNotebookSlidePreviewScale();
+    return;
+  }
+  const location = notebookSlidePreviewEntries(notebookSelectedIndex);
+  if (!location) {
+    notebookSlidePreviewCanvas.innerHTML = '<div class="notebook-slide-preview-empty">This cell is skipped from the presentation.</div>';
+    if (notebookSlidePreviewStatus) notebookSlidePreviewStatus.textContent = "Skipped";
+    updateNotebookSlidePreviewScale();
+    return;
+  }
+  location.entries.forEach(entry => renderPresentationCell(entry, notebookSlidePreviewCanvas));
+  const role = notebookSlideRole(selectedCell);
+  const roleLabel = NOTEBOOK_SLIDE_ROLES.find(([value]) => value === role)?.[1] || "Slide";
+  const verticalSuffix = location.verticalIndex ? ` · sub-slide ${location.verticalIndex + 1}` : "";
+  if (notebookSlidePreviewStatus) {
+    notebookSlidePreviewStatus.textContent = `Slide ${location.horizontalIndex + 1}${verticalSuffix} · ${roleLabel}`;
+  }
+  queueMicrotask(updateNotebookSlidePreviewScale);
+}
+
+function readStoredNotebookPreviewWidth() {
+  try {
+    const value = Number(window.localStorage.getItem(NOTEBOOK_PREVIEW_WIDTH_STORAGE_KEY));
+    return Number.isFinite(value) && value >= 280 ? value : 0;
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function persistNotebookPreviewWidth(width) {
+  try {
+    window.localStorage.setItem(NOTEBOOK_PREVIEW_WIDTH_STORAGE_KEY, String(Math.round(width)));
+  } catch (_error) {
+    // Resizing remains usable when local storage is unavailable.
+  }
+}
+
+function setNotebookSlidePreviewVisible(visible) {
+  notebookSlidePreviewVisible = Boolean(visible);
+  if (notebookSlidePreviewPane) notebookSlidePreviewPane.hidden = !notebookSlidePreviewVisible;
+  if (notebookPreviewResizer) notebookPreviewResizer.hidden = !notebookSlidePreviewVisible;
+  if (notebookSlidePreviewVisible && notebookSlidePreviewPane) {
+    const storedWidth = readStoredNotebookPreviewWidth();
+    if (storedWidth) notebookSlidePreviewPane.style.width = `${storedWidth}px`;
+    renderNotebookSlidePreview();
+  }
+  updateTopPreviewButton();
+}
+
+function toggleNotebookSlidePreview() {
+  setNotebookSlidePreviewVisible(!notebookSlidePreviewVisible);
+}
+
 function renderPresentationCell(entry, container) {
   const { cell, index, role } = entry;
   if (role === "notes") {
@@ -3154,6 +3267,7 @@ function renderNotebookCell(cell, index) {
     notebookCells.querySelectorAll(".notebook-cell").forEach((node, nodeIndex) => {
       node.classList.toggle("selected", nodeIndex === index);
     });
+    renderNotebookSlidePreview();
   });
 
   const gutter = document.createElement("div");
@@ -3255,6 +3369,7 @@ function rerenderNotebookCell(index) {
   if (existing) existing.replaceWith(replacement);
   else renderNotebook();
   renderNotebookOutline();
+  renderNotebookSlidePreview();
 }
 
 function renderNotebookOutline() {
@@ -3272,7 +3387,11 @@ function renderNotebookOutline() {
       link.addEventListener("click", event => {
         event.preventDefault();
         notebookSelectedIndex = index;
+        notebookCells.querySelectorAll(".notebook-cell").forEach((node, nodeIndex) => {
+          node.classList.toggle("selected", nodeIndex === index);
+        });
         notebookCellElement(cell.id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        renderNotebookSlidePreview();
       });
       outline.appendChild(link);
     });
@@ -3361,6 +3480,7 @@ function focusNotebookCell(index) {
   const cell = notebookDocument?.cells[index];
   if (!cell) return;
   notebookSelectedIndex = index;
+  renderNotebookSlidePreview();
   const element = notebookCellElement(cell.id);
   element?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   const aceEditor = notebookEditors.get(cell.id);
@@ -3387,6 +3507,7 @@ function refreshNotebookCellResult(index) {
   }
   const output = element.querySelector(".notebook-output");
   if (output) renderCellOutputs(cell, output);
+  renderNotebookSlidePreview();
 }
 
 async function executeNotebookCell(index) {
@@ -4180,8 +4301,10 @@ pdfPreview?.addEventListener("load", () => {
 document.getElementById("compileBtn")
   .addEventListener("click", () => compileCurrentFile(false));
 
-document.getElementById("topPreviewBtn")
-  ?.addEventListener("click", () => setView("preview"));
+topPreviewBtn?.addEventListener("click", () => {
+  if (!notebookWorkspace.hidden) toggleNotebookSlidePreview();
+  else setView("preview");
+});
 
 livePreviewToggle?.addEventListener("change", () => {
   persistLivePreviewEnabled(livePreviewToggle.checked);
@@ -4332,8 +4455,38 @@ document.addEventListener("click", event => {
   if (!fileContextMenu.contains(event.target)) hideContextMenu();
 });
 
-window.addEventListener("resize", hideContextMenu);
+window.addEventListener("resize", () => {
+  hideContextMenu();
+  updateNotebookSlidePreviewScale();
+});
 window.addEventListener("blur", hideContextMenu);
+
+notebookPreviewResizer?.addEventListener("pointerdown", event => {
+  if (!notebookSlidePreviewVisible || !notebookSlidePreviewPane) return;
+  notebookPreviewResizeActive = true;
+  notebookPreviewResizer.classList.add("dragging");
+  notebookPreviewResizer.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+});
+
+notebookPreviewResizer?.addEventListener("pointermove", event => {
+  if (!notebookPreviewResizeActive || !notebookSlidePreviewPane) return;
+  const right = notebookSlidePreviewPane.parentElement?.getBoundingClientRect().right || window.innerWidth;
+  const available = notebookSlidePreviewPane.parentElement?.clientWidth || window.innerWidth;
+  const width = Math.max(280, Math.min(available * 0.7, right - event.clientX));
+  notebookSlidePreviewPane.style.width = `${width}px`;
+  updateNotebookSlidePreviewScale();
+});
+
+function finishNotebookPreviewResize() {
+  if (!notebookPreviewResizeActive) return;
+  notebookPreviewResizeActive = false;
+  notebookPreviewResizer?.classList.remove("dragging");
+  if (notebookSlidePreviewPane) persistNotebookPreviewWidth(notebookSlidePreviewPane.getBoundingClientRect().width);
+}
+
+notebookPreviewResizer?.addEventListener("pointerup", finishNotebookPreviewResize);
+notebookPreviewResizer?.addEventListener("pointercancel", finishNotebookPreviewResize);
 
 document.querySelectorAll("[data-command]").forEach(button => {
   button.addEventListener("click", () =>
