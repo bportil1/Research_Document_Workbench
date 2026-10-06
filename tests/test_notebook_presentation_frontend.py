@@ -13,7 +13,8 @@ STYLES = ROOT / "tech_documents" / "web" / "static" / "styles.css"
 class NotebookPresentationFrontendContractTests(unittest.TestCase):
     def test_live_presentation_and_export_controls_are_present(self):
         html = TEMPLATE.read_text(encoding="utf-8")
-        self.assertIn('id="notebookPresentBtn"', html)
+        self.assertIn('id="presentationPresentBtn"', html)
+        self.assertIn('id="presentationExportBtn"', html)
         self.assertIn('id="notebookPresentation"', html)
         self.assertIn('id="notebookRevealSlides"', html)
         self.assertIn('id="notebookExportDialog"', html)
@@ -30,10 +31,33 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('["fragment", "Fragment"]', javascript)
         self.assertIn('["skip", "Skip"]', javascript)
         self.assertIn('["notes", "Speaker notes"]', javascript)
-        self.assertIn('if (cell.cell_type === "markdown") {\n    actions.appendChild(notebookSlideRoleSelect(cell, index));', javascript)
+        self.assertIn('if (cell.cell_type === "markdown" && workbenchPurpose === "presentations") {\n    actions.appendChild(notebookSlideRoleSelect(cell, index));', javascript)
         self.assertIn('new window.Reveal(notebookReveal', javascript)
         self.assertIn('Run live', javascript)
         self.assertIn('refreshNotebookPresentationCell(index)', javascript)
+
+
+    def test_presentation_controls_are_isolated_in_a_first_class_subwing(self):
+        html = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn('id="workbenchPurposeBar"', html)
+        self.assertIn('id="documentsPurposeBtn"', html)
+        self.assertIn('id="presentationsPurposeBtn"', html)
+        self.assertIn('id="presentationToolbar"', html)
+        self.assertIn('id="presentationKindLabel"', html)
+        self.assertNotIn('id="notebookPresentBtn"', html)
+        self.assertNotIn('id="notebookExportBtn"', html)
+
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('function setWorkbenchPurpose(purpose, { announce = true } = {})', javascript)
+        self.assertIn('function currentPresentationKind()', javascript)
+        self.assertIn('"Notebook Presentation"', javascript)
+        self.assertIn('"Markdown Presentation"', javascript)
+        self.assertIn('isPresentationMarkdownPath(currentFile)', javascript)
+        self.assertIn('workbenchPurpose === "presentations"', javascript)
+
+        css = STYLES.read_text(encoding="utf-8")
+        self.assertIn('.workbench-purpose-bar', css)
+        self.assertIn('.presentation-toolbar', css)
 
     def test_notebook_authoring_preview_is_side_by_side_collapsible_and_synchronized(self):
         html = TEMPLATE.read_text(encoding="utf-8")
@@ -46,7 +70,7 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('function setNotebookSlidePreviewVisible(visible)', javascript)
         self.assertIn('function renderNotebookSlidePreview()', javascript)
         self.assertIn('function notebookSlidePreviewEntries(index)', javascript)
-        self.assertIn('if (!notebookWorkspace.hidden) toggleNotebookSlidePreview();', javascript)
+        self.assertIn('if (workbenchPurpose === "presentations") toggleNotebookSlidePreview();', javascript)
         self.assertIn('renderNotebookSlidePreview();', javascript)
         self.assertIn('NOTEBOOK_PREVIEW_WIDTH_STORAGE_KEY', javascript)
 

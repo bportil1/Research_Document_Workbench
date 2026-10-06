@@ -337,6 +337,58 @@ body.detached-preview-mode .editor-grid.preview .preview-pane {
   flex-direction: column;
 }
 
+.workbench-purpose-bar {
+  min-height: 38px;
+  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.workbench-purpose-bar button {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.workbench-purpose-bar button.active {
+  border-color: var(--border);
+  background: var(--panel2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.presentation-toolbar {
+  min-height: 42px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+
+.presentation-toolbar[hidden] {
+  display: none !important;
+}
+
+.presentation-toolbar-context,
+.presentation-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.presentation-toolbar-context span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .toolbar {
   min-height: 48px;
   padding: 7px 10px;

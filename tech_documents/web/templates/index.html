@@ -81,6 +81,22 @@
     </aside>
 
     <main class="main-area">
+      <nav id="workbenchPurposeBar" class="workbench-purpose-bar" aria-label="Workbench purpose">
+        <button id="documentsPurposeBtn" type="button" class="active" aria-pressed="true">Documents</button>
+        <button id="presentationsPurposeBtn" type="button" aria-pressed="false">Presentations</button>
+      </nav>
+
+      <div id="presentationToolbar" class="presentation-toolbar" hidden>
+        <div class="presentation-toolbar-context">
+          <strong>Presentation</strong>
+          <span id="presentationKindLabel">Select a notebook or Markdown presentation</span>
+        </div>
+        <div class="presentation-toolbar-actions">
+          <button id="presentationPresentBtn" type="button" class="primary">Present</button>
+          <button id="presentationExportBtn" type="button">Export…</button>
+        </div>
+      </div>
+
       <div id="textToolbar" class="toolbar pah-toolbar">
         <div class="toolbar-group formatting-toggle-group">
           <button id="toggleFormattingBtn" type="button" aria-expanded="true" aria-controls="formattingControls" title="Collapse formatting controls">Formatting ▾</button>
@@ -139,8 +155,6 @@
             <button id="notebookInterruptBtn" type="button">Interrupt</button>
             <button id="notebookRestartBtn" type="button">Restart Kernel</button>
             <button id="notebookClearOutputsBtn" type="button">Clear Outputs</button>
-            <button id="notebookPresentBtn" type="button">Present</button>
-            <button id="notebookExportBtn" type="button">Export…</button>
           </div>
         </div>
         <div id="notebookDependencyNotice" class="notebook-dependency-notice" hidden></div>

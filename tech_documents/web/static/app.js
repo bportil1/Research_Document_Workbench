@@ -30,6 +30,13 @@ const outline = document.getElementById("outline");
 const editorGrid = document.getElementById("editorGrid");
 const searchInput = document.getElementById("searchInput");
 const textToolbar = document.getElementById("textToolbar");
+const workbenchPurposeBar = document.getElementById("workbenchPurposeBar");
+const documentsPurposeBtn = document.getElementById("documentsPurposeBtn");
+const presentationsPurposeBtn = document.getElementById("presentationsPurposeBtn");
+const presentationToolbar = document.getElementById("presentationToolbar");
+const presentationKindLabel = document.getElementById("presentationKindLabel");
+const presentationPresentBtn = document.getElementById("presentationPresentBtn");
+const presentationExportBtn = document.getElementById("presentationExportBtn");
 const toggleFormattingBtn = document.getElementById("toggleFormattingBtn");
 const formattingControls = document.getElementById("formattingControls");
 const notebookWorkspace = document.getElementById("notebookWorkspace");
@@ -167,6 +174,7 @@ let diagramBuilderGeneration = 0;
 let diagramBuilderNormalizedSource = "";
 
 let notebookDocument = null;
+let workbenchPurpose = "documents";
 
 let notebookSlidePreviewVisible = false;
 let notebookPreviewResizeActive = false;
@@ -1219,6 +1227,11 @@ async function openFile(filename) {
   currentFilename.textContent = currentFile;
   setStatus(`Opened ${currentFile}`);
   renderFiles();
+  if (isPresentationMarkdownPath(currentFile)) {
+    setWorkbenchPurpose("presentations", { announce: false });
+  } else {
+    updatePresentationPurposeUI();
+  }
   updatePreview();
   updateCursorStatus();
   updateDiagramBuilderAvailability();
@@ -2421,9 +2434,93 @@ async function handleContextAction(action) {
 }
 
 
+function isMarkdownPath(path) {
+  return /\.md$/i.test(String(path || ""));
+}
+
+function isPresentationMarkdownPath(path) {
+  return /\.slides\.md$/i.test(String(path || ""));
+}
+
+function currentPresentationKind() {
+  if (isNotebookPath(currentFile)) return "notebook";
+  if (isMarkdownPath(currentFile)) return "markdown";
+  return "";
+}
+
+function updatePresentationPurposeUI() {
+  const presentationActive = workbenchPurpose === "presentations";
+  documentsPurposeBtn?.classList.toggle("active", !presentationActive);
+  presentationsPurposeBtn?.classList.toggle("active", presentationActive);
+  documentsPurposeBtn?.setAttribute("aria-pressed", String(!presentationActive));
+  presentationsPurposeBtn?.setAttribute("aria-pressed", String(presentationActive));
+  if (presentationToolbar) presentationToolbar.hidden = !presentationActive;
+
+  const kind = currentPresentationKind();
+  if (presentationKindLabel) {
+    presentationKindLabel.textContent = kind === "notebook"
+      ? "Notebook Presentation"
+      : kind === "markdown"
+        ? "Markdown Presentation"
+        : "Select a .ipynb, .md, or .slides.md file";
+  }
+
+  const notebookReady = presentationActive && kind === "notebook" && Boolean(notebookDocument);
+  if (presentationPresentBtn) {
+    presentationPresentBtn.disabled = !notebookReady;
+    presentationPresentBtn.title = notebookReady
+      ? "Open the notebook as a full Reveal presentation"
+      : kind === "markdown"
+        ? "Standalone Markdown presentation rendering is implemented in Presentation Sprint P4"
+        : "Open a notebook presentation first";
+  }
+  if (presentationExportBtn) {
+    presentationExportBtn.disabled = !notebookReady;
+    presentationExportBtn.title = notebookReady
+      ? "Export this notebook presentation"
+      : kind === "markdown"
+        ? "Markdown presentation export is implemented with standalone Markdown presentation support"
+        : "Open a notebook presentation first";
+  }
+
+  if (!notebookWorkspace.hidden) {
+    renderNotebook();
+    renderNotebookOutline();
+    if (!presentationActive && notebookSlidePreviewVisible) {
+      setNotebookSlidePreviewVisible(false);
+    }
+  }
+  updateTopPreviewButton();
+}
+
+function setWorkbenchPurpose(purpose, { announce = true } = {}) {
+  const next = purpose === "presentations" ? "presentations" : "documents";
+  if (workbenchPurpose === next) {
+    updatePresentationPurposeUI();
+    return;
+  }
+  workbenchPurpose = next;
+  updatePresentationPurposeUI();
+  if (!announce) return;
+  if (next === "presentations") {
+    const kind = currentPresentationKind();
+    if (kind === "notebook") setStatus("Presentation workspace · Notebook Presentation");
+    else if (kind === "markdown") setStatus("Presentation workspace · Markdown Presentation");
+    else setStatus("Presentation workspace · select a notebook or Markdown presentation");
+  } else {
+    setStatus(currentFile ? `Document workspace · ${currentFile}` : "Document workspace");
+  }
+}
+
 function updateTopPreviewButton() {
   if (!topPreviewBtn) return;
   if (!notebookWorkspace.hidden) {
+    if (workbenchPurpose !== "presentations") {
+      topPreviewBtn.hidden = true;
+      topPreviewBtn.classList.remove("active");
+      return;
+    }
+    topPreviewBtn.hidden = false;
     topPreviewBtn.textContent = notebookSlidePreviewVisible ? "Hide Preview" : "Preview";
     topPreviewBtn.title = notebookSlidePreviewVisible
       ? "Collapse the notebook slide preview"
@@ -2431,6 +2528,7 @@ function updateTopPreviewButton() {
     topPreviewBtn.classList.toggle("active", notebookSlidePreviewVisible);
     return;
   }
+  topPreviewBtn.hidden = false;
   topPreviewBtn.textContent = "Preview";
   topPreviewBtn.title = "Show preview only";
   topPreviewBtn.classList.remove("active");
@@ -2541,6 +2639,7 @@ async function openNotebook(filename) {
   renderNotebookOutline();
   updateDiagramBuilderAvailability();
   renderFiles();
+  updatePresentationPurposeUI();
   setStatus(`Opened notebook ${currentFile}`);
 }
 
@@ -3324,7 +3423,7 @@ function renderNotebookCell(cell, index) {
     changeNotebookCellType(index, typeSelect.value);
   });
   actions.appendChild(typeSelect);
-  if (cell.cell_type === "markdown") {
+  if (cell.cell_type === "markdown" && workbenchPurpose === "presentations") {
     actions.appendChild(notebookSlideRoleSelect(cell, index));
   }
   actions.appendChild(makeNotebookButton("Delete", "Delete cell", () => deleteNotebookCell(index)));
@@ -4302,8 +4401,11 @@ document.getElementById("compileBtn")
   .addEventListener("click", () => compileCurrentFile(false));
 
 topPreviewBtn?.addEventListener("click", () => {
-  if (!notebookWorkspace.hidden) toggleNotebookSlidePreview();
-  else setView("preview");
+  if (!notebookWorkspace.hidden) {
+    if (workbenchPurpose === "presentations") toggleNotebookSlidePreview();
+    return;
+  }
+  setView("preview");
 });
 
 livePreviewToggle?.addEventListener("change", () => {
@@ -4428,10 +4530,16 @@ document.getElementById("notebookInterruptBtn")?.addEventListener("click", () =>
 document.getElementById("notebookRestartBtn")?.addEventListener("click", () =>
   restartNotebookKernel().catch(error => setStatus(`Restart failed: ${error.message}`)));
 document.getElementById("notebookClearOutputsBtn")?.addEventListener("click", clearNotebookOutputs);
-document.getElementById("notebookPresentBtn")?.addEventListener("click", () =>
-  openNotebookPresentation().catch(error => setStatus(`Presentation failed: ${error.message}`)));
-document.getElementById("notebookExportBtn")?.addEventListener("click", () =>
-  openNotebookExportDialog().catch(error => setStatus(`Export setup failed: ${error.message}`)));
+documentsPurposeBtn?.addEventListener("click", () => setWorkbenchPurpose("documents"));
+presentationsPurposeBtn?.addEventListener("click", () => setWorkbenchPurpose("presentations"));
+presentationPresentBtn?.addEventListener("click", () => {
+  if (currentPresentationKind() !== "notebook") return;
+  openNotebookPresentation().catch(error => setStatus(`Presentation failed: ${error.message}`));
+});
+presentationExportBtn?.addEventListener("click", () => {
+  if (currentPresentationKind() !== "notebook") return;
+  openNotebookExportDialog().catch(error => setStatus(`Export setup failed: ${error.message}`));
+});
 document.getElementById("notebookPresentationCloseBtn")?.addEventListener("click", () =>
   closeNotebookPresentation().catch(error => setStatus(error.message)));
 document.getElementById("notebookPresentationPrevBtn")?.addEventListener("click", () => notebookRevealDeck?.prev());
