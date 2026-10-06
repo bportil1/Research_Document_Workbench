@@ -1199,7 +1199,7 @@ function renderFiles() {
   renderNodes(project.tree || [], fileList, 1);
 }
 
-async function openFile(filename) {
+async function openFile(filename, { purposeOverride = "" } = {}) {
   cancelLiveLatexPreview();
   closeDiagramBuilder();
   if (isNotebookPath(filename)) {
@@ -1227,10 +1227,14 @@ async function openFile(filename) {
   currentFilename.textContent = currentFile;
   setStatus(`Opened ${currentFile}`);
   renderFiles();
-  if (isPresentationMarkdownPath(currentFile)) {
+  if (purposeOverride === "presentations") {
+    setWorkbenchPurpose("presentations", { announce: false });
+  } else if (purposeOverride === "documents") {
+    setWorkbenchPurpose("documents", { announce: false });
+  } else if (isPresentationMarkdownPath(currentFile)) {
     setWorkbenchPurpose("presentations", { announce: false });
   } else {
-    updatePresentationPurposeUI();
+    setWorkbenchPurpose("documents", { announce: false });
   }
   updatePreview();
   updateCursorStatus();
@@ -2391,8 +2395,11 @@ async function deleteItem(item) {
 function showContextMenu(x, y, item) {
   selectedItem = { ...item };
   const isRoot = !item.path;
-  fileContextMenu.querySelector('[data-file-action="open"]').hidden =
-    item.type !== "file" || !item.editable;
+  const editableFile = item.type === "file" && item.editable;
+  const markdownFile = editableFile && isMarkdownPath(item.path);
+  fileContextMenu.querySelector('[data-file-action="open"]').hidden = !editableFile || markdownFile;
+  fileContextMenu.querySelector('[data-file-action="open-document"]').hidden = !markdownFile;
+  fileContextMenu.querySelector('[data-file-action="open-presentation"]').hidden = !markdownFile;
   fileContextMenu.querySelector('[data-file-action="new-file"]').hidden =
     item.type !== "directory";
   fileContextMenu.querySelector('[data-file-action="new-folder"]').hidden =
@@ -2420,6 +2427,12 @@ async function handleContextAction(action) {
   if (action === "open" && item.type === "file" && item.editable) {
     if (dirty) await saveCurrentFile();
     await openFile(item.path);
+  } else if (action === "open-document" && item.type === "file" && isMarkdownPath(item.path)) {
+    if (dirty) await saveCurrentFile();
+    await openFile(item.path, { purposeOverride: "documents" });
+  } else if (action === "open-presentation" && item.type === "file" && isMarkdownPath(item.path)) {
+    if (dirty) await saveCurrentFile();
+    await openFile(item.path, { purposeOverride: "presentations" });
   } else if (action === "new-file" && item.type === "directory") {
     await createFile(item.path);
   } else if (action === "new-folder" && item.type === "directory") {
@@ -2466,20 +2479,21 @@ function updatePresentationPurposeUI() {
   }
 
   const notebookReady = presentationActive && kind === "notebook" && Boolean(notebookDocument);
+  const markdownReady = presentationActive && kind === "markdown" && Boolean(currentFile);
   if (presentationPresentBtn) {
-    presentationPresentBtn.disabled = !notebookReady;
+    presentationPresentBtn.disabled = !(notebookReady || markdownReady);
     presentationPresentBtn.title = notebookReady
       ? "Open the notebook as a full Reveal presentation"
-      : kind === "markdown"
-        ? "Standalone Markdown presentation rendering is implemented in Presentation Sprint P4"
-        : "Open a notebook presentation first";
+      : markdownReady
+        ? "Open this Markdown file as a standalone Reveal presentation"
+        : "Open a notebook or Markdown presentation first";
   }
   if (presentationExportBtn) {
     presentationExportBtn.disabled = !notebookReady;
     presentationExportBtn.title = notebookReady
       ? "Export this notebook presentation"
-      : kind === "markdown"
-        ? "Markdown presentation export is implemented with standalone Markdown presentation support"
+      : markdownReady
+        ? "Markdown presentation export and backup targets are implemented in Presentation Sprint P7"
         : "Open a notebook presentation first";
   }
 
@@ -3012,22 +3026,24 @@ function notebookSlideRoleSelect(cell, index) {
   return select;
 }
 
-function renderPresentationMarkdown(cell, container) {
+function renderPresentationMarkdownSource(source, container, attachments = null) {
   const rendered = document.createElement("div");
   rendered.className = "notebook-presentation-markdown";
-  rendered.innerHTML = DOMPurify.sanitize(marked.parse(cell.source || ""), {
+  rendered.innerHTML = DOMPurify.sanitize(marked.parse(source || ""), {
     USE_PROFILES: { html: true },
   });
-  rendered.querySelectorAll('img[src^="attachment:"]').forEach(image => {
-    const name = decodeURIComponent((image.getAttribute("src") || "").slice("attachment:".length));
-    const attachment = cell.attachments?.[name];
-    if (!attachment) return;
-    if (attachment["image/png"]) image.src = `data:image/png;base64,${notebookText(attachment["image/png"])}`;
-    else if (attachment["image/jpeg"]) image.src = `data:image/jpeg;base64,${notebookText(attachment["image/jpeg"])}`;
-    else if (attachment["image/svg+xml"]) {
-      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(notebookText(attachment["image/svg+xml"]))}`;
-    }
-  });
+  if (attachments) {
+    rendered.querySelectorAll('img[src^="attachment:"]').forEach(image => {
+      const name = decodeURIComponent((image.getAttribute("src") || "").slice("attachment:".length));
+      const attachment = attachments[name];
+      if (!attachment) return;
+      if (attachment["image/png"]) image.src = `data:image/png;base64,${notebookText(attachment["image/png"])}`;
+      else if (attachment["image/jpeg"]) image.src = `data:image/jpeg;base64,${notebookText(attachment["image/jpeg"])}`;
+      else if (attachment["image/svg+xml"]) {
+        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(notebookText(attachment["image/svg+xml"]))}`;
+      }
+    });
+  }
   rewriteNotebookProjectAssets(rendered);
   rendered.querySelectorAll("pre code").forEach(code => hljs.highlightElement(code));
   if (typeof renderMathInElement === "function") {
@@ -3042,6 +3058,10 @@ function renderPresentationMarkdown(cell, container) {
     });
   }
   container.appendChild(rendered);
+}
+
+function renderPresentationMarkdown(cell, container) {
+  renderPresentationMarkdownSource(cell.source || "", container, cell.attachments || null);
 }
 
 function renderPresentationCode(cell, index, container) {
@@ -3230,16 +3250,61 @@ function buildNotebookPresentationSlides() {
   });
 }
 
-async function openNotebookPresentation() {
-  if (!notebookDocument || !currentFile) return;
-  if (!window.Reveal) {
-    setStatus("Reveal.js is not installed. Run python3 scripts/vendor_reveal.py once.");
+function presentationMarkdownBody(source) {
+  const normalized = String(source || "").replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n");
+  if (lines[0]?.trim() !== "---") return normalized;
+  const closing = lines.slice(1).findIndex(line => line.trim() === "---");
+  if (closing < 0) return normalized;
+  const metadataLines = lines.slice(1, closing + 1);
+  const looksLikeFrontMatter = metadataLines.some(line => /^[A-Za-z0-9_-]+\s*:/.test(line.trim()));
+  return looksLikeFrontMatter ? lines.slice(closing + 2).join("\n") : normalized;
+}
+
+function splitPresentationMarkdown(source) {
+  const lines = presentationMarkdownBody(source).split("\n");
+  const slides = [];
+  let current = [];
+  let fenceMarker = "";
+  lines.forEach(line => {
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      const marker = fence[1][0];
+      if (!fenceMarker) fenceMarker = marker;
+      else if (fenceMarker === marker) fenceMarker = "";
+      current.push(line);
+      return;
+    }
+    if (!fenceMarker && /^\s*---\s*$/.test(line)) {
+      slides.push(current.join("\n").trim());
+      current = [];
+      return;
+    }
+    current.push(line);
+  });
+  slides.push(current.join("\n").trim());
+  return slides.filter((slide, index) => slide || slides.length === 1 || index === 0);
+}
+
+function buildMarkdownPresentationSlides() {
+  notebookRevealSlides.innerHTML = "";
+  const slides = splitPresentationMarkdown(editor.value);
+  if (!slides.length || slides.every(slide => !slide.trim())) {
+    const section = document.createElement("section");
+    section.innerHTML = "<h2>Empty presentation</h2><p>Add Markdown slides separated by <code>---</code>.</p>";
+    notebookRevealSlides.appendChild(section);
     return;
   }
-  if (dirty) await saveCurrentNotebook();
-  buildNotebookPresentationSlides();
-  notebookPresentationTitle.textContent = basename(currentFile);
-  notebookPresentationStatus.textContent = "Live notebook · same Python kernel · exports never execute cells";
+  slides.forEach(source => {
+    const horizontal = document.createElement("section");
+    const slide = document.createElement("section");
+    renderPresentationMarkdownSource(source, slide);
+    horizontal.appendChild(slide);
+    notebookRevealSlides.appendChild(horizontal);
+  });
+}
+
+async function startRevealPresentation({ statusText }) {
   notebookPresentation.hidden = false;
   notebookRevealDeck = new window.Reveal(notebookReveal, {
     embedded: true,
@@ -3252,7 +3317,33 @@ async function openNotebookPresentation() {
   });
   await notebookRevealDeck.initialize();
   notebookRevealDeck.focus();
-  setStatus(`Presenting ${currentFile}`);
+  setStatus(statusText);
+}
+
+async function openMarkdownPresentation() {
+  if (!currentFile || !isMarkdownPath(currentFile)) return;
+  if (!window.Reveal) {
+    setStatus("Reveal.js is not installed. Run python3 scripts/vendor_reveal.py once.");
+    return;
+  }
+  if (dirty) await saveCurrentFile();
+  buildMarkdownPresentationSlides();
+  notebookPresentationTitle.textContent = basename(currentFile);
+  notebookPresentationStatus.textContent = "Standalone Markdown · local Reveal.js · --- separates slides";
+  await startRevealPresentation({ statusText: `Presenting ${currentFile}` });
+}
+
+async function openNotebookPresentation() {
+  if (!notebookDocument || !currentFile) return;
+  if (!window.Reveal) {
+    setStatus("Reveal.js is not installed. Run python3 scripts/vendor_reveal.py once.");
+    return;
+  }
+  if (dirty) await saveCurrentNotebook();
+  buildNotebookPresentationSlides();
+  notebookPresentationTitle.textContent = basename(currentFile);
+  notebookPresentationStatus.textContent = "Live notebook · same Python kernel · exports never execute cells";
+  await startRevealPresentation({ statusText: `Presenting ${currentFile}` });
 }
 
 async function closeNotebookPresentation() {
@@ -4533,8 +4624,12 @@ document.getElementById("notebookClearOutputsBtn")?.addEventListener("click", cl
 documentsPurposeBtn?.addEventListener("click", () => setWorkbenchPurpose("documents"));
 presentationsPurposeBtn?.addEventListener("click", () => setWorkbenchPurpose("presentations"));
 presentationPresentBtn?.addEventListener("click", () => {
-  if (currentPresentationKind() !== "notebook") return;
-  openNotebookPresentation().catch(error => setStatus(`Presentation failed: ${error.message}`));
+  const kind = currentPresentationKind();
+  if (kind === "notebook") {
+    openNotebookPresentation().catch(error => setStatus(`Presentation failed: ${error.message}`));
+  } else if (kind === "markdown") {
+    openMarkdownPresentation().catch(error => setStatus(`Presentation failed: ${error.message}`));
+  }
 });
 presentationExportBtn?.addEventListener("click", () => {
   if (currentPresentationKind() !== "notebook") return;

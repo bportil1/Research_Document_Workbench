@@ -81,6 +81,24 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('.notebook-preview-resizer', css)
         self.assertIn('.notebook-slide-preview-canvas', css)
 
+    def test_standalone_markdown_presentations_are_native_and_explicit(self):
+        html = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn('data-file-action="open-document"', html)
+        self.assertIn('data-file-action="open-presentation"', html)
+
+        javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('function splitPresentationMarkdown(source)', javascript)
+        self.assertIn('/^\\s*---\\s*$/.test(line)', javascript)
+        self.assertIn('function buildMarkdownPresentationSlides()', javascript)
+        self.assertIn('function openMarkdownPresentation()', javascript)
+        self.assertIn('renderPresentationMarkdownSource(source, slide)', javascript)
+        self.assertIn('Standalone Markdown · local Reveal.js · --- separates slides', javascript)
+        self.assertIn('openFile(item.path, { purposeOverride: "documents" })', javascript)
+        self.assertIn('openFile(item.path, { purposeOverride: "presentations" })', javascript)
+        self.assertIn('isPresentationMarkdownPath(currentFile)', javascript)
+        self.assertIn('markdownReady', javascript)
+        self.assertIn('openMarkdownPresentation().catch', javascript)
+
     def test_export_ui_is_preflighted_and_non_executing(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
         self.assertIn('Checking export capabilities', javascript)
