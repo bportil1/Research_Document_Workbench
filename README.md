@@ -131,7 +131,7 @@ The notebook surface supports:
 
 Execution uses a local `python3` Jupyter kernel started in the project directory. The Workbench prefers the Python environment that launched the application, so relative project paths and the active Workbench environment behave naturally. Kernel processes are local and are started only when code is executed.
 
-Notebook cells can also carry standard Jupyter slideshow roles (new slide, sub-slide, fragment, skip, and speaker notes). **Present** opens a live Reveal.js presentation inside the Workbench using the same notebook model and running Python kernel, so presentation code cells can be executed without creating a separate slide deck.
+Markdown notebook cells are slides by default when presented. The compact presentation-role selector appears only on Markdown cells and can override that default with sub-slide, fragment, skip, or speaker-notes behavior using standard Jupyter slideshow metadata. Code cells stay with the current slide by default. **Present** opens a live Reveal.js presentation inside the Workbench using the same notebook model and running Python kernel, so presentation code cells can be executed without creating a separate slide deck.
 
 **Export…** provides a single preflighted export surface. HTML, Markdown, and offline Reveal.js presentations use `nbconvert`; Word, PowerPoint, PDF, and Beamer outputs become available when a local Quarto installation is detected. PDF/Beamer readiness also checks for a local TeX engine. Export consumes the outputs already stored in the notebook and never reruns cells. Generated files are written under `builds/notebooks/`.
 

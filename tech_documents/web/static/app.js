@@ -2828,23 +2828,28 @@ function renderCellOutputs(cell, container) {
 
 
 const NOTEBOOK_SLIDE_ROLES = [
-  ["", "Normal"],
-  ["slide", "New slide"],
+  ["slide", "Slide"],
   ["subslide", "Sub-slide"],
   ["fragment", "Fragment"],
   ["skip", "Skip"],
   ["notes", "Speaker notes"],
 ];
 
-function notebookSlideRole(cell) {
+function notebookStoredSlideRole(cell) {
   return notebookText(cell?.metadata?.slideshow?.slide_type || "");
+}
+
+function notebookSlideRole(cell) {
+  const stored = notebookStoredSlideRole(cell);
+  if (stored) return stored;
+  return cell?.cell_type === "markdown" ? "slide" : "";
 }
 
 function setNotebookSlideRole(index, role) {
   const cell = notebookDocument?.cells[index];
-  if (!cell) return;
+  if (!cell || cell.cell_type !== "markdown") return;
   if (!cell.metadata || typeof cell.metadata !== "object") cell.metadata = {};
-  if (!role) {
+  if (role === "slide") {
     if (cell.metadata.slideshow && typeof cell.metadata.slideshow === "object") {
       delete cell.metadata.slideshow.slide_type;
       if (!Object.keys(cell.metadata.slideshow).length) delete cell.metadata.slideshow;
@@ -2958,6 +2963,7 @@ function presentationGroups() {
       groups.push([[]]);
       currentVertical = groups[groups.length - 1][0];
     } else if (role === "subslide") {
+      if (!groups.length) groups.push([[]]);
       groups[groups.length - 1].push([]);
       currentVertical = groups[groups.length - 1][groups[groups.length - 1].length - 1];
     }
@@ -3204,7 +3210,9 @@ function renderNotebookCell(cell, index) {
     changeNotebookCellType(index, typeSelect.value);
   });
   actions.appendChild(typeSelect);
-  actions.appendChild(notebookSlideRoleSelect(cell, index));
+  if (cell.cell_type === "markdown") {
+    actions.appendChild(notebookSlideRoleSelect(cell, index));
+  }
   actions.appendChild(makeNotebookButton("Delete", "Delete cell", () => deleteNotebookCell(index)));
   header.appendChild(actions);
   main.appendChild(header);

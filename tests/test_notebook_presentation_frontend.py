@@ -19,14 +19,18 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('id="notebookExportDialog"', html)
         self.assertIn('/static/vendor/reveal/dist/reveal.js', html)
 
-    def test_standard_jupyter_slideshow_metadata_drives_live_deck(self):
+    def test_markdown_cells_default_to_slides_and_metadata_overrides_remain_supported(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
+        self.assertIn('function notebookStoredSlideRole(cell)', javascript)
+        self.assertIn('return cell?.cell_type === "markdown" ? "slide" : "";', javascript)
+        self.assertIn('if (role === "slide")', javascript)
         self.assertIn('cell.metadata.slideshow.slide_type = role', javascript)
-        self.assertIn('["slide", "New slide"]', javascript)
+        self.assertIn('["slide", "Slide"]', javascript)
         self.assertIn('["subslide", "Sub-slide"]', javascript)
         self.assertIn('["fragment", "Fragment"]', javascript)
         self.assertIn('["skip", "Skip"]', javascript)
         self.assertIn('["notes", "Speaker notes"]', javascript)
+        self.assertIn('if (cell.cell_type === "markdown") {\n    actions.appendChild(notebookSlideRoleSelect(cell, index));', javascript)
         self.assertIn('new window.Reveal(notebookReveal', javascript)
         self.assertIn('Run live', javascript)
         self.assertIn('refreshNotebookPresentationCell(index)', javascript)
