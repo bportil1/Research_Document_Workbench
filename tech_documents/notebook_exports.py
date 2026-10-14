@@ -9,6 +9,12 @@ from typing import Any
 
 from .errors import DocumentEngineError
 
+try:
+    from pah_jobs.exchange import observed as _monitor
+except ImportError:
+    def _monitor(owner, label):
+        return lambda function: function
+
 
 class NotebookExportError(DocumentEngineError):
     status_code = 500
@@ -159,6 +165,7 @@ class NotebookExportService:
         cleaned = cleaned.strip("._")
         return cleaned or "notebook"
 
+    @_monitor("tech_documents", "Notebook export")
     def export(
         self,
         notebook_path: Path,

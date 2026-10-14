@@ -10,6 +10,12 @@ import shutil
 import subprocess
 from typing import Any, BinaryIO
 
+try:
+    from pah_jobs.exchange import observed as _monitor
+except ImportError:
+    def _monitor(owner, label):
+        return lambda function: function
+
 from .compilation import (
     CompilationResult,
     available_compilers,
@@ -930,6 +936,7 @@ class DocumentEngine:
             force=force,
         )
 
+    @_monitor("tech_documents", "LaTeX compilation")
     def _compile_latex_source(
         self,
         *,

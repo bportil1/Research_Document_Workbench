@@ -79,6 +79,12 @@ class _KernelSession:
     started_at: float
 
 
+try:
+    from pah_jobs.exchange import observed as _monitor
+except ImportError:
+    def _monitor(owner, label):
+        return lambda function: function
+
 class NotebookRuntime:
     """Notebook storage and local Python-kernel execution.
 
@@ -184,6 +190,7 @@ class NotebookRuntime:
             "started_at": session.started_at if session is not None else None,
         }
 
+    @_monitor("tech_documents", "Notebook cell execution")
     def execute(self, path: Path, cwd: Path, source: str, *, timeout: float = 120.0) -> dict[str, Any]:
         if not isinstance(source, str):
             raise DocumentEngineError("Notebook cell source must be text.")
