@@ -2037,3 +2037,17 @@ body {
     display: none !important;
   }
 }
+
+/* PS-07: style/export UI uses the same Workbench dialog controls as notebook exports. */
+.presentation-style-dialog { width: min(790px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto; }
+.presentation-style-source { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.presentation-style-buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.presentation-style-import { border-top: 1px solid #c8d7e4; padding-top: 12px; }
+.presentation-style-import summary { cursor: pointer; font-weight: 600; margin-bottom: 10px; }
+.presentation-style-import > .notebook-export-field { margin: 8px 0; }
+.presentation-style-import input[type="file"] { max-width: 100%; }
+.presentation-style-import > button { margin: 6px 0 10px; }
+.presentation-style-dialog select:disabled, .presentation-style-dialog button:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 760px) {
+  .presentation-style-dialog .notebook-export-field { grid-template-columns: 1fr; gap: 4px; }
+}

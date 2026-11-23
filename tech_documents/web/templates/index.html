@@ -94,7 +94,8 @@
         <div class="presentation-toolbar-actions">
           <button id="presentationPresentBtn" type="button" class="primary">Present</button>
           <button id="presentationBackupBtn" type="button" title="Create the alternate .ipynb/.slides.md presentation beside the current source">Backup</button>
-          <button id="presentationExportBtn" type="button">Export…</button>
+          <button id="presentationStyleBtn" type="button">Style &amp; export…</button>
+          <button id="presentationExportBtn" type="button" title="Legacy exports and presentation backups">Other exports…</button>
         </div>
       </div>
 
@@ -348,6 +349,69 @@
         <button id="latexProjectCreateBtn" type="button" class="primary">Create LaTeX project</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="presentationStyleDialog" class="notebook-export-dialog presentation-style-dialog" aria-labelledby="presentationStyleTitle">
+    <div class="notebook-export-shell">
+      <div class="notebook-export-header">
+        <div>
+          <h2 id="presentationStyleTitle">Presentation style &amp; export</h2>
+          <p>Choose a compatible local renderer and a pinned presentation theme. Settings belong to this presentation only.</p>
+        </div>
+        <button id="presentationStyleCloseBtn" type="button" aria-label="Close styling dialog">×</button>
+      </div>
+      <p id="presentationStyleSource" class="presentation-style-source"></p>
+      <label class="notebook-export-field">
+        <span>Renderer / format</span>
+        <select id="presentationStyleRenderer"></select>
+      </label>
+      <label class="notebook-export-field">
+        <span>Installed style</span>
+        <select id="presentationStyleSelection"></select>
+      </label>
+      <div id="presentationStyleDescription" class="notebook-export-description" aria-live="polite"></div>
+      <label class="notebook-export-field">
+        <span>Output filename</span>
+        <input id="presentationStyleOutput" type="text" placeholder="presentation.pdf">
+      </label>
+      <p id="presentationStyleProfileStatus" class="notebook-export-description"></p>
+      <div class="presentation-style-buttons">
+        <button id="presentationStyleSaveBtn" type="button">Save profile</button>
+        <button id="presentationStyleClearBtn" type="button">Clear profile</button>
+        <button id="presentationStyleExportBtn" type="button" class="primary">Export now</button>
+      </div>
+      <details class="presentation-style-import">
+        <summary>Import or manage Beamer themes</summary>
+        <p class="notebook-export-description">Import a local ZIP or a directory/ZIP already in the current Workbench project. Sources stay on this machine; import never runs project build scripts.</p>
+        <label class="notebook-export-field">
+          <span>Beamer ZIP</span>
+          <input id="presentationStyleZip" type="file" accept=".zip,application/zip">
+        </label>
+        <label class="notebook-export-field">
+          <span>Or project path</span>
+          <input id="presentationStylePath" type="text" placeholder="slides/theme-directory (project-relative)">
+        </label>
+        <button id="presentationStyleInspectBtn" type="button">Inspect local source</button>
+        <label class="notebook-export-field">
+          <span>Detected theme</span>
+          <select id="presentationStyleCandidate" disabled></select>
+        </label>
+        <label class="notebook-export-field">
+          <span>Style version</span>
+          <input id="presentationStyleVersion" type="text" value="1.0.0" placeholder="1.0.0">
+        </label>
+        <label class="notebook-export-field">
+          <span>Display label</span>
+          <input id="presentationStyleLabel" type="text" placeholder="Optional theme label">
+        </label>
+        <div class="presentation-style-buttons">
+          <button id="presentationStyleImportBtn" type="button" disabled>Install selected theme</button>
+          <button id="presentationStyleRemoveBtn" type="button" disabled>Uninstall selected style version</button>
+        </div>
+        <div id="presentationStyleImportStatus" class="notebook-export-description" aria-live="polite"></div>
+      </details>
+      <div id="presentationStyleResult" class="notebook-export-result" role="status" aria-live="polite"></div>
+    </div>
   </dialog>
 
   <dialog id="notebookExportDialog" class="notebook-export-dialog">

@@ -294,3 +294,22 @@ still need distinct output names to prevent export file collisions.
 
 No network or external service is involved. This metadata persistence does not
 change the TeX trust model described in PS-05.
+
+### PS-07: presentation styling interface
+
+The Presentations toolbar now exposes **Style & export** alongside the unchanged
+legacy **Other exports** and Backup paths. The new modal lists available local
+renderers and their actual runtime readiness, selects only compatible installed
+style versions, and can create an export with the shared `DocumentEngine` service.
+Saving or clearing a profile calls PS-06's per-source profile API; choosing a
+style alone never edits the Markdown/notebook source or overwrites a saved profile.
+
+The standalone Flask adapter exposes `/api/presentation-styles` for catalog and
+uninstall, and `/api/presentation-styles/{inspect,import}` for the PS-04 importer.
+Sources are either ZIPs uploaded to a **temporary local directory** (discarded
+after the request) or paths restricted to an already attached Workbench project.
+The importer does not execute Makefiles or arbitrary project commands. The UI
+requires an explicit theme candidate and version when installing; uninstall is
+version-specific and warns about already-pinned profiles. Installed assets are
+copied into the PS-03 registry. No external theme catalog or network compiler
+is used. This UI does not provide a rendered theme gallery (reserved for PS-09).

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import contextmanager
+import tempfile
 from typing import Any
 
 from flask import (
@@ -316,6 +318,83 @@ def presentation_export_capabilities(project: str, filename: str) -> Response:
     except DocumentEngineError as exc:
         return _json_engine_error(exc)
     return jsonify(result)
+
+
+# PS-07: Presentation styles are managed only by this local Workbench process.
+# Browser-supplied filesystem paths are restricted to an attached Workbench project.
+# A ZIP upload is staged in a disposable local directory and is never executed.
+@contextmanager
+def _beamer_import_source():
+    archive = request.files.get("archive")
+    payload = request.form if archive is not None else request.get_json(silent=True)
+    if not isinstance(payload, dict) and archive is None:
+        raise PresentationError("Beamer import requires JSON or a ZIP upload.")
+    if archive is not None:
+        if not archive.filename or not archive.filename.lower().endswith(".zip"):
+            raise PresentationError("Select a .zip archive for Beamer import.")
+        with tempfile.TemporaryDirectory(prefix="workbench-beamer-upload-") as temporary:
+            destination = Path(temporary) / "upload.zip"
+            archive.save(destination)
+            yield destination, payload
+        return
+    project = payload.get("project")
+    relative = payload.get("path")
+    if not isinstance(project, str) or not project or not isinstance(relative, str):
+        raise PresentationError("Choose a Workbench project and a relative directory or ZIP path.")
+    source = engine.item_path(project, relative, allow_empty=True)
+    if not source.exists():
+        raise PresentationError("Selected Beamer source does not exist in this project.")
+    yield source, payload
+
+
+@app.get("/api/presentation-styles")
+def presentation_styles() -> Response:
+    try:
+        styles = engine.presentation_style_catalog()
+        renderers = engine.presentation_renderer_capabilities()
+    except (DocumentEngineError, ValueError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"styles": styles, "renderers": renderers})
+
+
+@app.post("/api/presentation-styles/inspect")
+def inspect_presentation_style() -> Response:
+    try:
+        with _beamer_import_source() as (source, _payload):
+            inspected = engine.inspect_beamer_styles(source)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"inspection": inspected})
+
+
+@app.post("/api/presentation-styles/import")
+def import_presentation_style() -> Response:
+    try:
+        with _beamer_import_source() as (source, payload):
+            version = payload.get("version", "")
+            if not isinstance(version, str):
+                raise PresentationError("Style version must be a string.")
+            options = {}
+            for field in ("selector", "identifier", "label", "description"):
+                value = payload.get(field)
+                if value is not None and not isinstance(value, str):
+                    raise PresentationError(f"{field} must be a string.")
+                if value is not None and (field == "description" or value):
+                    options[field] = value
+            manifest = engine.import_beamer_style(source, version=version, **options)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"ok": True, "style": manifest}), 201
+
+
+@app.delete("/api/presentation-styles/<kind>/<identifier>/<version>")
+def uninstall_presentation_style(kind: str, identifier: str, version: str) -> Response:
+    try:
+        reference = StyleReference(identifier=identifier, version=version, kind=kind)
+        engine.presentation_styles.uninstall(reference)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"ok": True})
 
 
 @app.get("/api/presentations/<project>/<path:filename>/profile")

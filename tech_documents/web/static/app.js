@@ -2503,6 +2503,7 @@ function updatePresentationPurposeUI() {
         ? "Create an .ipynb backup beside this Markdown presentation"
         : "Open a notebook or Markdown presentation first";
   }
+  document.getElementById("presentationStyleBtn").disabled = !(notebookReady || markdownReady);
   if (presentationExportBtn) {
     presentationExportBtn.disabled = !(notebookReady || markdownReady);
     presentationExportBtn.title = notebookReady
@@ -3689,6 +3690,292 @@ async function runNotebookExport() {
   } finally {
     notebookExportRunBtn.disabled = false;
   }
+}
+
+// PS-07: reusable style selection and rendering. These controls call the shared
+// presentation API, not the legacy notebook-only export pipeline.
+const presentationStyleDialog = document.getElementById("presentationStyleDialog");
+const presentationStyleRenderer = document.getElementById("presentationStyleRenderer");
+const presentationStyleSelection = document.getElementById("presentationStyleSelection");
+const presentationStyleOutput = document.getElementById("presentationStyleOutput");
+const presentationStyleDescription = document.getElementById("presentationStyleDescription");
+const presentationStyleResult = document.getElementById("presentationStyleResult");
+const presentationStyleImportStatus = document.getElementById("presentationStyleImportStatus");
+const presentationStyleProfileStatus = document.getElementById("presentationStyleProfileStatus");
+const presentationStyleCandidate = document.getElementById("presentationStyleCandidate");
+const presentationStyleZip = document.getElementById("presentationStyleZip");
+const presentationStylePath = document.getElementById("presentationStylePath");
+let presentationStyleSession = null;
+
+function presentationStyleUrl(session, suffix = "") {
+  return `/api/presentations/${encodeURIComponent(session.project)}/${session.file.split("/").map(encodeURIComponent).join("/")}${suffix}`;
+}
+
+function selectedPresentationStyle() {
+  const index = Number(presentationStyleSelection.value);
+  return Number.isInteger(index) && presentationStyleSelection.value !== "" && presentationStyleSession?.styles[index]
+    ? presentationStyleSession.styles[index] : null;
+}
+
+function selectedPresentationStyleRef() {
+  const style = selectedPresentationStyle();
+  return style ? { kind: style.kind, identifier: style.identifier, version: style.version } : null;
+}
+
+function chosenPresentationTarget() {
+  const [renderer, format] = presentationStyleRenderer.value.split(":");
+  const cap = presentationStyleSession?.renderers.find(item => item.id === renderer);
+  return cap && cap.output_formats.includes(format) ? { renderer, format, cap } : null;
+}
+
+function refreshPresentationStyleSelection(desiredRef = null) {
+  const session = presentationStyleSession;
+  if (!session) return;
+  const choice = chosenPresentationTarget();
+  presentationStyleSelection.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Default (no installed style)";
+  presentationStyleSelection.appendChild(none);
+  for (let i = 0; i < session.styles.length; i++) {
+    const style = session.styles[i];
+    if (!choice || !style.renderer_ids.includes(choice.renderer) || !choice.cap.style_kinds.includes(style.kind)) continue;
+    const option = document.createElement("option");
+    option.value = String(i);
+    option.textContent = `${style.label} — ${style.identifier} v${style.version}`;
+    presentationStyleSelection.appendChild(option);
+    if (desiredRef && desiredRef.identifier === style.identifier && desiredRef.version === style.version && desiredRef.kind === style.kind) {
+      presentationStyleSelection.value = String(i);
+    }
+  }
+  updatePresentationStyleDetails();
+}
+
+function updatePresentationStyleDetails() {
+  const choice = chosenPresentationTarget();
+  const style = selectedPresentationStyle();
+  const supported = Boolean(choice?.cap.available);
+  const description = style
+    ? `${style.label} · ${style.kind} · version ${style.version} · ${style.assets.length} registered assets`
+    : "Default renderer style; no custom theme is applied.";
+  presentationStyleDescription.textContent = choice
+    ? `${description} ${supported ? "" : `Renderer unavailable: ${choice.cap.reason}`}`
+    : "No renderer supports this presentation source.";
+  document.getElementById("presentationStyleExportBtn").disabled = !supported;
+  document.getElementById("presentationStyleSaveBtn").disabled = !choice;
+  document.getElementById("presentationStyleRemoveBtn").disabled = !style;
+}
+
+async function loadPresentationStyleCatalog({ desiredRef = null } = {}) {
+  const session = presentationStyleSession;
+  const response = await api("/api/presentation-styles");
+  if (presentationStyleSession !== session) return;
+  session.styles = response.styles;
+  session.renderers = response.renderers;
+  refreshPresentationStyleSelection(desiredRef);
+}
+
+async function openPresentationStyleDialog() {
+  const kind = currentPresentationKind();
+  if (!currentProject || !currentFile || !kind) return;
+  const session = { project: currentProject, file: currentFile, kind, renderers: [], styles: [], inspection: null };
+  presentationStyleSession = session;
+  presentationStyleResult.textContent = "Loading renderer capabilities and saved presentation settings…";
+  presentationStyleImportStatus.textContent = "";
+  presentationStyleProfileStatus.textContent = "";
+  presentationStyleCandidate.replaceChildren();
+  presentationStyleCandidate.disabled = true;
+  document.getElementById("presentationStyleImportBtn").disabled = true;
+  document.getElementById("presentationStyleSource").textContent = `${session.project} / ${session.file}`;
+  presentationStyleOutput.value = basename(session.file).replace(/\.(slides\.md|ipynb|markdown|md)$/i, "");
+  presentationStyleDialog.showModal();
+  try {
+    const [catalog, capabilities] = await Promise.all([
+      api("/api/presentation-styles"),
+      api(presentationStyleUrl(session, "/exports")),
+    ]);
+    if (presentationStyleSession !== session) return;
+    session.renderers = catalog.renderers.filter(entry => capabilities.renderers.some(item => item.id === entry.id));
+    session.styles = catalog.styles;
+    presentationStyleRenderer.replaceChildren();
+    for (const cap of session.renderers) {
+      for (const format of cap.output_formats) {
+        const option = document.createElement("option");
+        option.value = `${cap.id}:${format}`;
+        option.textContent = `${cap.label} — ${format.toUpperCase()}${cap.available ? "" : " (tool unavailable)"}`;
+        // Saving an unavailable target's settings is permitted; exporting it is not.
+        presentationStyleRenderer.appendChild(option);
+      }
+    }
+    const preferred = session.renderers.find(item => item.available) || session.renderers[0];
+    if (preferred) presentationStyleRenderer.value = `${preferred.id}:${preferred.output_formats[0]}`;
+    let profile = null;
+    try {
+      const response = await api(presentationStyleUrl(session, "/profile"));
+      profile = response.profile;
+    } catch (error) {
+      presentationStyleProfileStatus.textContent = `Saved profile could not be loaded: ${error.message}`;
+    }
+    if (profile) {
+      const key = `${profile.renderer_id}:${profile.output_format}`;
+      if ([...presentationStyleRenderer.options].some(option => option.value === key)) {
+        presentationStyleRenderer.value = key;
+      }
+      if (profile.output_name) presentationStyleOutput.value = profile.output_name;
+      presentationStyleProfileStatus.textContent = `Saved profile: ${profile.renderer_id}/${profile.output_format}${profile.style ? ` · ${profile.style.identifier}@${profile.style.version}` : ""}`;
+    } else if (!presentationStyleProfileStatus.textContent) {
+      presentationStyleProfileStatus.textContent = "No saved profile. Save to reuse these settings for this file.";
+    }
+    refreshPresentationStyleSelection(profile?.style);
+    presentationStyleResult.textContent = "Select a renderer and style, save the profile, or export immediately. Rendering is local.";
+  } catch (error) {
+    if (presentationStyleSession === session) presentationStyleResult.textContent = `Unable to load presentation settings: ${error.message}`;
+  }
+}
+
+function presentationStyleRequestBody() {
+  const choice = chosenPresentationTarget();
+  if (!choice) throw new Error("Choose a supported renderer and output format.");
+  return {
+    renderer: choice.renderer,
+    format: choice.format,
+    output_name: presentationStyleOutput.value.trim() || null,
+    style: selectedPresentationStyleRef(),
+  };
+}
+
+async function saveCurrentPresentationStyleProfile() {
+  const session = presentationStyleSession;
+  if (!session) return;
+  const button = document.getElementById("presentationStyleSaveBtn");
+  button.disabled = true;
+  try {
+    const result = await api(presentationStyleUrl(session, "/profile"), {
+      method: "PUT", body: JSON.stringify({ ...presentationStyleRequestBody(), options: {} }),
+    });
+    presentationStyleProfileStatus.textContent = `Saved for ${session.file}: ${result.profile.renderer_id}/${result.profile.output_format}${result.profile.style ? ` · ${result.profile.style.identifier}@${result.profile.style.version}` : ""}`;
+    presentationStyleResult.textContent = "Profile saved locally and pinned to this presentation.";
+  } finally {
+    updatePresentationStyleDetails();
+  }
+}
+
+async function clearCurrentPresentationStyleProfile() {
+  const session = presentationStyleSession;
+  if (!session) return;
+  const result = await api(presentationStyleUrl(session, "/profile"), { method: "DELETE" });
+  presentationStyleProfileStatus.textContent = result.deleted ? "Saved profile cleared for this presentation." : "No saved profile for this presentation.";
+}
+
+async function exportSelectedPresentationStyle() {
+  const session = presentationStyleSession;
+  if (!session) return;
+  if (currentProject !== session.project || currentFile !== session.file) throw new Error("Presentation selection changed; reopen style settings.");
+  if (dirty) {
+    if (session.kind === "notebook") await saveCurrentNotebook();
+    else await saveCurrentFile();
+  }
+  const button = document.getElementById("presentationStyleExportBtn");
+  button.disabled = true;
+  presentationStyleResult.textContent = "Building presentation using the selected local renderer…";
+  try {
+    const result = await api(presentationStyleUrl(session, "/exports"), {
+      method: "POST", body: JSON.stringify(presentationStyleRequestBody()),
+    });
+    presentationStyleResult.replaceChildren();
+    const span = document.createElement("span");
+    span.textContent = `Created ${result.path} `;
+    const link = document.createElement("a");
+    link.href = result.download_url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Download";
+    presentationStyleResult.append(span, link);
+    setStatus(`Presentation exported: ${result.path}`);
+    if (currentProject === session.project && currentFile === session.file) await loadProjects(session.project, session.file);
+  } finally {
+    updatePresentationStyleDetails();
+  }
+}
+
+function resetPresentationStyleInspection() {
+  if (presentationStyleSession) presentationStyleSession.inspection = null;
+  presentationStyleCandidate.replaceChildren();
+  presentationStyleCandidate.disabled = true;
+  document.getElementById("presentationStyleImportBtn").disabled = true;
+}
+
+function presentationStyleImportPayload(mode) {
+  const session = presentationStyleSession;
+  if (!session) throw new Error("Open a presentation first.");
+  const upload = presentationStyleZip.files?.[0];
+  const path = presentationStylePath.value.trim();
+  const fields = mode === "import" ? {
+    version: document.getElementById("presentationStyleVersion").value.trim(),
+    selector: presentationStyleCandidate.value,
+    label: document.getElementById("presentationStyleLabel").value.trim(),
+  } : {};
+  if (upload) {
+    const form = new FormData();
+    form.append("archive", upload);
+    for (const [key, value] of Object.entries(fields)) if (value) form.append(key, value);
+    return form;
+  }
+  if (!path) throw new Error("Choose a local ZIP or enter a project-relative directory/ZIP path.");
+  return JSON.stringify({ project: session.project, path, ...fields });
+}
+
+async function inspectPresentationStyleSource() {
+  const session = presentationStyleSession;
+  resetPresentationStyleInspection();
+  presentationStyleImportStatus.textContent = "Inspecting Beamer source locally…";
+  const response = await api("/api/presentation-styles/inspect", {
+    method: "POST", body: presentationStyleImportPayload("inspect"),
+  });
+  if (presentationStyleSession !== session) return;
+  session.inspection = response.inspection;
+  for (const candidate of response.inspection.themes) {
+    const option = document.createElement("option");
+    option.value = candidate.selector;
+    option.textContent = `${candidate.theme_name} · ${candidate.asset_paths.length} assets · ${candidate.selector}`;
+    presentationStyleCandidate.appendChild(option);
+  }
+  presentationStyleCandidate.disabled = !response.inspection.themes.length;
+  document.getElementById("presentationStyleImportBtn").disabled = !response.inspection.themes.length;
+  const notes = response.inspection.warnings || [];
+  presentationStyleImportStatus.textContent = `${response.inspection.themes.length} theme(s); ${response.inspection.project_entrypoints.length} presentation source(s).${notes.length ? ` Warnings: ${notes.join("; ")}` : ""}`;
+}
+
+async function importSelectedPresentationStyle() {
+  const session = presentationStyleSession;
+  if (!session?.inspection || !presentationStyleCandidate.value) throw new Error("Inspect and choose a theme first.");
+  presentationStyleImportStatus.textContent = "Installing the selected style into the local registry…";
+  const response = await api("/api/presentation-styles/import", {
+    method: "POST", body: presentationStyleImportPayload("import"),
+  });
+  if (presentationStyleSession !== session) return;
+  const imported = response.style;
+  // Importing a Beamer style makes Beamer the expected renderer, if available.
+  if ([...presentationStyleRenderer.options].some(option => option.value === "beamer:pdf")) presentationStyleRenderer.value = "beamer:pdf";
+  await loadPresentationStyleCatalog({ desiredRef: imported });
+  presentationStyleImportStatus.textContent = `Installed ${imported.label} v${imported.version}. No original presentation content was imported.`;
+  resetPresentationStyleInspection();
+}
+
+async function uninstallSelectedPresentationStyle() {
+  const style = selectedPresentationStyle();
+  if (!style) return;
+  if (!window.confirm(`Uninstall ${style.label} v${style.version}? Existing profiles pinned to this version will no longer export until the style is reinstalled.`)) return;
+  await api(`/api/presentation-styles/${encodeURIComponent(style.kind)}/${encodeURIComponent(style.identifier)}/${encodeURIComponent(style.version)}`, { method: "DELETE" });
+  await loadPresentationStyleCatalog();
+  presentationStyleImportStatus.textContent = `Uninstalled ${style.label} v${style.version}.`;
+}
+
+function presentationStyleAction(promise) {
+  promise.catch(error => {
+    presentationStyleResult.textContent = `Presentation style operation failed: ${error.message}`;
+    presentationStyleImportStatus.textContent = error.message;
+  });
 }
 
 function renderNotebookCell(cell, index) {
@@ -4885,6 +5172,26 @@ presentationPresentBtn?.addEventListener("click", () => {
 });
 presentationBackupBtn?.addEventListener("click", () =>
   createPresentationBackup().catch(error => setStatus(`Backup failed: ${error.message}`)));
+document.getElementById("presentationStyleBtn")?.addEventListener("click", () =>
+  presentationStyleAction(openPresentationStyleDialog()));
+document.getElementById("presentationStyleCloseBtn")?.addEventListener("click", () => presentationStyleDialog.close());
+presentationStyleRenderer?.addEventListener("change", () => refreshPresentationStyleSelection());
+presentationStyleSelection?.addEventListener("change", updatePresentationStyleDetails);
+document.getElementById("presentationStyleSaveBtn")?.addEventListener("click", () =>
+  presentationStyleAction(saveCurrentPresentationStyleProfile()));
+document.getElementById("presentationStyleClearBtn")?.addEventListener("click", () =>
+  presentationStyleAction(clearCurrentPresentationStyleProfile()));
+document.getElementById("presentationStyleExportBtn")?.addEventListener("click", () =>
+  presentationStyleAction(exportSelectedPresentationStyle()));
+document.getElementById("presentationStyleInspectBtn")?.addEventListener("click", () =>
+  presentationStyleAction(inspectPresentationStyleSource()));
+document.getElementById("presentationStyleImportBtn")?.addEventListener("click", () =>
+  presentationStyleAction(importSelectedPresentationStyle()));
+document.getElementById("presentationStyleRemoveBtn")?.addEventListener("click", () =>
+  presentationStyleAction(uninstallSelectedPresentationStyle()));
+presentationStyleZip?.addEventListener("change", resetPresentationStyleInspection);
+presentationStylePath?.addEventListener("input", resetPresentationStyleInspection);
+presentationStyleDialog?.addEventListener("close", () => { presentationStyleSession = null; });
 presentationExportBtn?.addEventListener("click", () =>
   openPresentationTransferDialog().catch(error => setStatus(`Export setup failed: ${error.message}`)));
 document.getElementById("notebookPresentationCloseBtn")?.addEventListener("click", () =>
