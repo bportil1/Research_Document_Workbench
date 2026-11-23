@@ -14,6 +14,7 @@ from flask import (
 )
 
 from ..api import DocumentEngine
+from ..presentations import StyleReference, PresentationError
 from ..diagrams import DiagramSyntaxError
 from ..errors import DocumentEngineError
 from ..paths import safe_name
@@ -321,12 +322,19 @@ def presentation_export_capabilities(project: str, filename: str) -> Response:
 def export_presentation(project: str, filename: str) -> Response:
     payload = request.get_json(silent=True) or {}
     try:
+        style_data = payload.get("style")
+        style = None
+        if style_data is not None:
+            if not isinstance(style_data, dict) or set(style_data) != {"identifier", "version", "kind"}:
+                raise PresentationError("Style requires identifier, version, and kind.")
+            style = StyleReference(**style_data)
         result = engine.export_presentation(
             project,
             filename,
             renderer_id=str(payload.get("renderer", "")),
             output_format=str(payload.get("format", "")),
             output_name=str(payload.get("output_name", "") or "") or None,
+            style=style,
         )
     except (DocumentEngineError, ValueError) as exc:
         if isinstance(exc, DocumentEngineError):

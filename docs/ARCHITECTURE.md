@@ -195,3 +195,49 @@ entrypoints and one reusable MSU theme at
 files and three logos registered. The standalone style package includes no
 slide content or project Makefile. This tests import and persistence only, not
 successful Beamer compilation or the future export style selection workflow.
+
+## PS-05 — Render with a pinned imported Beamer style
+
+The shared export service accepts an optional `StyleReference(identifier, version,
+"beamer")` on a `PresentationExportRequest`, or as the `style=` keyword to
+`DocumentEngine.export_presentation()`. The presentation HTTP export endpoint
+accepts the same optional reference as a JSON object:
+
+```json
+{
+  "renderer": "beamer",
+  "format": "pdf",
+  "style": {"identifier": "beamer.msu", "version": "1.0.0", "kind": "beamer"}
+}
+```
+
+Style selection is **per export**; project-level persistence and the visual
+style selector are deferred to PS-06/PS-07. The selected style must be installed
+in the local PS-03 registry with an import-generated `beamertheme*.sty`
+entrypoint, and it must allow the `beamer` renderer. The service verifies the
+exact style reference and every asset digest before exporting.
+
+`tech_documents.presentations.beamer_rendering.stage_beamer_style()` copies
+verified theme assets into an automatically cleaned temporary directory and
+provides recursive `TEXINPUTS` to Quarto's LaTeX toolchain. The selected Beamer
+theme name is passed as a Quarto command-line metadata override (`-M theme:<name>`). Source `.md`/`.ipynb` files are not rewritten, and the
+existing unstyled export routes remain unchanged. Styled Markdown writes to
+`builds/presentations/`; styled notebooks write to `builds/notebooks/`.
+Each styled export builds its PDF in a unique temporary output directory and
+then moves the successful PDF into place, avoiding stale-output false positives.
+Both send `--no-execute` so notebook code is not run during a styled export.
+Styles for Reveal.js and PowerPoint are still unsupported in this sprint.
+
+**Prerequisites:** Quarto and a locally installed TeX/LaTeX engine with any
+packages required by the imported style. The registry does not install TeX
+packages or invoke imported Makefiles. Importing a Beamer style is not
+security verification of its LaTeX: *only compile themes you trust*. Temporary
+asset staging is not an OS-level sandbox; TeX and Quarto may read project and
+local files, including through existing project configuration. No cloud
+compilation is used.
+
+Validation uses simulated Quarto subprocess calls for API and renderer contracts;
+Quarto is not installed in the sprint's test environment. Separately, the
+original `csci447.zip` theme was imported and compiled successfully with
+`pdflatex -no-shell-escape` using a newly written two-slide deck and the staged
+assets. This is a TeX integration check, not a complete Quarto integration test.

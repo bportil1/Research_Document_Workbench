@@ -44,7 +44,7 @@ from .latex_tools import parse_latex_log, preflight_latex
 from .notebook_exports import NotebookExportService
 from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
 from .presentations import (
-    PresentationExportRequest, PresentationService, PresentationStyleRegistry, existing_export_renderers,
+    PresentationExportRequest, PresentationService, PresentationStyleRegistry, StyleReference, existing_export_renderers,
     inspect_beamer_source, import_beamer_style,
 )
 from .paths import (
@@ -84,7 +84,7 @@ class DocumentEngine:
         self.notebook_exports = NotebookExportService()
         self.presentation_styles = PresentationStyleRegistry(self.base_dir / ".workbench-presentation-styles")
         self.presentations = PresentationService(
-            existing_export_renderers(self.notebook_exports), styles=self.presentation_styles,
+            existing_export_renderers(self.notebook_exports, styles=self.presentation_styles), styles=self.presentation_styles,
         )
         self.ensure_directories()
 
@@ -558,11 +558,11 @@ class DocumentEngine:
         renderer_id: str,
         output_format: str,
         output_name: str | None = None,
+        style: StyleReference | None = None,
     ) -> dict[str, Any]:
-        """One entry point for Markdown and notebook presentation exports.
+        """Export Markdown or notebooks, optionally using a pinned Beamer style.
 
-        Style references and renderer options are added after the style registry
-        and renderer-specific configuration have been implemented.
+        Style selection is explicit per export; persisted choices arrive in PS-06.
         """
         source, source_kind = self._presentation_source(project, filename)
         root = self.project_path(project).resolve()
@@ -573,10 +573,11 @@ class DocumentEngine:
             renderer_id=renderer_id,
             output_format=output_format,
             output_name=output_name,
+            style=style,
         )
         result = self.presentations.export(request)
         output_path = result.output_path.resolve()
-        return {
+        response = {
             "ok": True,
             "renderer": result.renderer_id,
             "format": result.output_format,
@@ -585,6 +586,9 @@ class DocumentEngine:
             "size": output_path.stat().st_size,
             "engine": "nbconvert+reveal" if source_kind == "notebook" and renderer_id == "reveal" else "quarto",
         }
+        if style is not None:
+            response["style"] = {"identifier": style.identifier, "version": style.version, "kind": style.kind}
+        return response
 
     def notebook_capabilities(self) -> dict[str, Any]:
         return {

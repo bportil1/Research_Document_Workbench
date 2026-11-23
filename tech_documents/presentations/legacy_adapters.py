@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import tempfile
+
+from .beamer_rendering import stage_beamer_style
+from .style_registry import PresentationStyleRegistry
 
 from ..notebook_exports import NotebookExportService
 from .models import (
@@ -31,14 +35,19 @@ class ExistingExportRenderer:
     Notebook presentation exports continue to use NotebookExportService, preserving
     their paths, stored outputs, nbconvert slideshow flags, and offline Reveal
     assets. Markdown exports use Quarto *directly*, avoiding a lossy notebook
-    conversion. Registered styles/options are deliberately unsupported in PS-02.
+    conversion. A pinned Beamer style can be applied by Quarto without
+    changing the original presentation or the legacy unstyled export path.
     """
 
-    def __init__(self, renderer_id: str, notebooks: NotebookExportService) -> None:
+    def __init__(
+        self, renderer_id: str, notebooks: NotebookExportService, *,
+        styles: PresentationStyleRegistry | None = None,
+    ) -> None:
         if renderer_id not in _TARGETS:
             raise ValueError(f"Unrecognized presentation renderer: {renderer_id}")
         self.renderer_id = renderer_id
         self.notebooks = notebooks
+        self.styles = styles
 
     def capabilities(self) -> RendererCapabilities:
         label, output, notebook_format, _, _ = _TARGETS[self.renderer_id]
@@ -67,7 +76,7 @@ class ExistingExportRenderer:
             label=label,
             source_kinds=supported or ("markdown", "notebook"),
             output_formats=(output,),
-            style_kinds=(),  # PS-03/PS-05: styles will only be advertised when implemented
+            style_kinds=("beamer",) if self.renderer_id == "beamer" and self.styles is not None else (),
             available=bool(supported),
             reason="" if supported else " ".join(reasons),
         )
@@ -76,8 +85,12 @@ class ExistingExportRenderer:
         _, output, notebook_format, quarto_format, extension = _TARGETS[self.renderer_id]
         if request.output_format != output:
             raise PresentationError("Unsupported output format for presentation renderer.")
-        if request.style is not None or request.options:
-            raise PresentationError("Presentation styles and build options are not supported until a later sprint.")
+        if request.options:
+            raise PresentationError("Custom presentation build options are not yet supported.")
+        if request.style is not None:
+            if self.renderer_id != "beamer" or self.styles is None:
+                raise PresentationError("This presentation renderer cannot apply registered styles.")
+            return self._render_styled_beamer(request)
         if request.source_kind == "notebook":
             # Reuse the existing implementation, never execute notebook cells.
             export_dir = request.project_root / "builds" / "notebooks"
@@ -130,12 +143,68 @@ class ExistingExportRenderer:
             raise PresentationError("Quarto completed without producing the expected presentation.")
         return PresentationExportResult(self.renderer_id, output, destination)
 
+    def _render_styled_beamer(self, request: PresentationExportRequest) -> PresentationExportResult:
+        """Use the same Quarto engine for styled Markdown and stored notebooks.
+
+        Style-free notebooks still take the original NotebookExportService path.
+        Quarto is explicitly instructed never to execute notebook cells here.
+        """
+        assert request.style is not None and self.styles is not None
+        if request.source_kind not in {"markdown", "notebook"}:
+            raise PresentationError("Styled Beamer exports require Markdown or notebook source.")
+        quarto = self.notebooks._quarto()
+        if not quarto:
+            raise PresentationError("Install Quarto to render presentations with a Beamer style.")
+        if not self.notebooks._has_latex():
+            raise PresentationError("Install a TeX/LaTeX engine to render styled Beamer presentations.")
+        folder = "notebooks" if request.source_kind == "notebook" else "presentations"
+        export_dir = request.project_root / "builds" / folder
+        self._check_export_directory(request.project_root, export_dir)
+        source_stem = request.source_path.stem
+        if request.source_kind == "markdown" and request.source_path.name.lower().endswith(".slides.md"):
+            source_stem = request.source_path.name[:-10]
+        stem = self.notebooks._safe_stem(request.output_name or source_stem)
+        if stem.lower().endswith(".pdf"):
+            stem = stem[:-4]
+        destination = export_dir / f"{stem}.pdf"
+        if destination.is_symlink() or not destination.resolve().is_relative_to(request.project_root.resolve()):
+            raise PresentationError("Presentation output must remain inside its project and cannot be a symlink.")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        # A unique output directory prevents a previous successful export from
+        # being mistaken for a new one and keeps partial PDFs out of the result.
+        with tempfile.TemporaryDirectory(prefix=".beamer-output-", dir=export_dir) as output_temp:
+            staged_pdf = Path(output_temp) / destination.name
+            with stage_beamer_style(self.styles, request.style) as staged:
+                command = [
+                    quarto, "render", str(request.source_path), "--to", "beamer",
+                    "--output", destination.name, "--output-dir", str(output_temp),
+                    "--no-execute", "-M", f"theme:{staged.theme_name}",
+                ]
+                try:
+                    completed = subprocess.run(
+                        command, cwd=str(request.source_path.parent), env=dict(staged.environ),
+                        text=True, capture_output=True, timeout=180, check=False,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise PresentationError("Styled Beamer rendering timed out after 180 seconds.") from exc
+                except OSError as exc:
+                    raise PresentationError(f"Unable to launch the local Quarto renderer: {exc}") from exc
+                if completed.returncode:
+                    detail = (completed.stderr or completed.stdout or "Styled Beamer export failed.").strip()
+                    raise PresentationError(detail[-4000:])
+            if not staged_pdf.is_file() or staged_pdf.is_symlink():
+                raise PresentationError("Quarto completed without producing the expected styled PDF.")
+            staged_pdf.replace(destination)
+        return PresentationExportResult(self.renderer_id, "pdf", destination)
+
     @staticmethod
     def _check_export_directory(root: Path, directory: Path) -> None:
         if not directory.resolve().is_relative_to(root.resolve()):
             raise PresentationError("Presentation build directory must remain inside its project.")
 
 
-def existing_export_renderers(notebooks: NotebookExportService) -> list[ExistingExportRenderer]:
-    """Create adapters sharing one existing notebook export service."""
-    return [ExistingExportRenderer(identifier, notebooks) for identifier in _TARGETS]
+def existing_export_renderers(
+    notebooks: NotebookExportService, *, styles: PresentationStyleRegistry | None = None,
+) -> list[ExistingExportRenderer]:
+    """Create adapters sharing one existing notebook export service and style registry."""
+    return [ExistingExportRenderer(identifier, notebooks, styles=styles) for identifier in _TARGETS]
