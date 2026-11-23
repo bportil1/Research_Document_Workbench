@@ -6,8 +6,13 @@ format-specific bindings for the shared presentation service, not theme manageme
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
+from typing import Callable
+
+from ..compilation import CompilationResult
+from .native_beamer import is_beamer_entrypoint
 
 from .beamer_rendering import stage_beamer_style
 from .style_registry import PresentationStyleRegistry
@@ -42,12 +47,14 @@ class ExistingExportRenderer:
     def __init__(
         self, renderer_id: str, notebooks: NotebookExportService, *,
         styles: PresentationStyleRegistry | None = None,
+        native_compile: Callable[[Path, Path], CompilationResult] | None = None,
     ) -> None:
         if renderer_id not in _TARGETS:
             raise ValueError(f"Unrecognized presentation renderer: {renderer_id}")
         self.renderer_id = renderer_id
         self.notebooks = notebooks
         self.styles = styles
+        self.native_compile = native_compile
 
     def capabilities(self) -> RendererCapabilities:
         label, output, notebook_format, _, _ = _TARGETS[self.renderer_id]
@@ -59,8 +66,10 @@ class ExistingExportRenderer:
         latex_ready = self.renderer_id != "beamer" or self.notebooks._has_latex()
         markdown_ready = bool(quarto) and latex_ready
         notebook_ready = bool(notebook_cap["available"])
+        native_ready = (self.renderer_id == "beamer" and self.native_compile is not None
+                        and bool(shutil.which("latexmk") or shutil.which("tectonic")))
         supported = tuple(kind for kind, ready in (
-            ("markdown", markdown_ready), ("notebook", notebook_ready),
+            ("markdown", markdown_ready), ("notebook", notebook_ready), ("latex", native_ready),
         ) if ready)
         reasons = []
         if not quarto:
@@ -69,12 +78,14 @@ class ExistingExportRenderer:
             reasons.append("Install a TeX/LaTeX engine for Beamer exports.")
         if not notebook_ready and notebook_cap["reason"] not in reasons:
             reasons.append(str(notebook_cap["reason"]))
+        if self.renderer_id == "beamer" and not native_ready:
+            reasons.append("Install latexmk/TeX Live or Tectonic for native Beamer projects.")
         # The PS-01 contract requires nonempty source_kinds even for an
         # unavailable renderer; available=True always reports exact coverage.
         return RendererCapabilities(
             renderer_id=self.renderer_id,
             label=label,
-            source_kinds=supported or ("markdown", "notebook"),
+            source_kinds=supported or (("markdown", "notebook", "latex") if self.renderer_id == "beamer" else ("markdown", "notebook")),
             output_formats=(output,),
             style_kinds=("beamer",) if self.renderer_id == "beamer" and self.styles is not None else (),
             available=bool(supported),
@@ -87,6 +98,10 @@ class ExistingExportRenderer:
             raise PresentationError("Unsupported output format for presentation renderer.")
         if request.options:
             raise PresentationError("Custom presentation build options are not yet supported.")
+        if request.source_kind == "latex":
+            if request.style is not None:
+                raise PresentationError("Native Beamer projects use their own theme; an installed style cannot be overlaid.")
+            return self._render_native_beamer(request)
         if request.style is not None:
             if self.renderer_id != "beamer" or self.styles is None:
                 raise PresentationError("This presentation renderer cannot apply registered styles.")
@@ -142,6 +157,50 @@ class ExistingExportRenderer:
         if not destination.is_file():
             raise PresentationError("Quarto completed without producing the expected presentation.")
         return PresentationExportResult(self.renderer_id, output, destination)
+
+    def _render_native_beamer(self, request: PresentationExportRequest) -> PresentationExportResult:
+        """Build an unchanged multi-file Beamer project through the LaTeX engine.
+
+        The native compiler uses the project's own preamble, bibliography and
+        theme assets. We copy only the finished PDF into the shared export area.
+        """
+        if self.renderer_id != "beamer" or self.native_compile is None:
+            raise PresentationError("Native Beamer requires a connected local LaTeX compiler.")
+        if request.source_path.suffix.lower() != ".tex" or not is_beamer_entrypoint(request.source_path):
+            raise PresentationError("Native Beamer export requires a main .tex with \\documentclass{beamer}.")
+        root = request.project_root.resolve()
+        export_dir = root / "builds" / "presentations"
+        if (root / "builds").is_symlink() or export_dir.is_symlink():
+            raise PresentationError("Native Beamer build directories must not be symlinks.")
+        self._check_export_directory(root, export_dir)
+        # Include the relative source directory in the default name. A project
+        # may have multiple independent Beamer mains named presentation.tex.
+        default_name = request.source_path.relative_to(root).with_suffix("").as_posix().replace("/", "__")
+        stem = self.notebooks._safe_stem(request.output_name or default_name)
+        if stem.lower().endswith(".pdf"):
+            stem = stem[:-4]
+        destination = export_dir / f"{stem}.pdf"
+        if destination.is_symlink() or not destination.resolve().is_relative_to(root):
+            raise PresentationError("Native Beamer export cannot write outside the project.")
+        result = self.native_compile(root, request.source_path)
+        if not result.ok or result.pdf_path is None or not result.pdf_path.is_file():
+            detail = result.error or "Native Beamer compilation failed."
+            raise PresentationError(f"{detail} {result.log[-2500:]}")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        # Atomic replacement: an unsuccessful build never appears as success.
+        with tempfile.NamedTemporaryFile(prefix=".beamer-export-", suffix=".pdf", dir=export_dir, delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                with result.pdf_path.open("rb") as compiled:
+                    shutil.copyfileobj(compiled, stream)
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+        try:
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return PresentationExportResult(self.renderer_id, "pdf", destination)
 
     def _render_styled_beamer(self, request: PresentationExportRequest) -> PresentationExportResult:
         """Use the same Quarto engine for styled Markdown and stored notebooks.
@@ -205,6 +264,9 @@ class ExistingExportRenderer:
 
 def existing_export_renderers(
     notebooks: NotebookExportService, *, styles: PresentationStyleRegistry | None = None,
+    native_compile: Callable[[Path, Path], CompilationResult] | None = None,
 ) -> list[ExistingExportRenderer]:
     """Create adapters sharing one existing notebook export service and style registry."""
-    return [ExistingExportRenderer(identifier, notebooks, styles=styles) for identifier in _TARGETS]
+    return [ExistingExportRenderer(identifier, notebooks, styles=styles,
+                                   native_compile=native_compile if identifier == "beamer" else None)
+            for identifier in _TARGETS]

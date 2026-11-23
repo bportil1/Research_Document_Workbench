@@ -148,7 +148,9 @@ class PresentationFoundationTests(unittest.TestCase):
         # Quarto, TeX, nbconvert and vendored Reveal.js assets.
         notebook_caps = {item["id"]: item for item in engine.notebook_exports.capabilities()["formats"]}
         by_renderer = {item["id"]: item for item in descriptions}
-        self.assertEqual(by_renderer["beamer"]["available"], notebook_caps["beamer"]["available"])
+        self.assertEqual(by_renderer["beamer"]["available"],
+                         notebook_caps["beamer"]["available"] or
+                         bool(__import__("shutil").which("latexmk") or __import__("shutil").which("tectonic")))
         self.assertEqual(by_renderer["powerpoint"]["available"], notebook_caps["pptx"]["available"])
         self.assertEqual(by_renderer["reveal"]["available"],
                          notebook_caps["reveal"]["available"] or bool(engine.notebook_exports._quarto()))

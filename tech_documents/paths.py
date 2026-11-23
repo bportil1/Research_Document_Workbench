@@ -5,7 +5,7 @@ from pathlib import Path, PurePosixPath
 
 from .errors import InvalidPathError, UnsupportedFileTypeError
 
-TEXT_EDITABLE_EXTENSIONS = {".md", ".markdown", ".tex", ".bib", ".txt", ".diagram"}
+TEXT_EDITABLE_EXTENSIONS = {".md", ".markdown", ".tex", ".sty", ".cls", ".bib", ".txt", ".diagram"}
 NOTEBOOK_EXTENSIONS = {".ipynb"}
 ALLOWED_EXTENSIONS = TEXT_EDITABLE_EXTENSIONS | NOTEBOOK_EXTENSIONS
 DIAGRAM_ASSET_EXTENSIONS = {".svg", ".png", ".pdf"}

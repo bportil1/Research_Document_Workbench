@@ -1223,7 +1223,7 @@ async function openFile(filename, { purposeOverride = "" } = {}) {
     setWorkbenchPurpose("presentations", { announce: false });
   } else if (purposeOverride === "documents") {
     setWorkbenchPurpose("documents", { announce: false });
-  } else if (isPresentationMarkdownPath(currentFile)) {
+  } else if (isPresentationMarkdownPath(currentFile) || isNativeBeamerSource(currentFile, editor.value)) {
     setWorkbenchPurpose("presentations", { announce: false });
   } else {
     setWorkbenchPurpose("documents", { announce: false });
@@ -2393,9 +2393,10 @@ function showContextMenu(x, y, item) {
   const isRoot = !item.path;
   const editableFile = item.type === "file" && item.editable;
   const markdownFile = editableFile && isMarkdownPath(item.path);
-  fileContextMenu.querySelector('[data-file-action="open"]').hidden = !editableFile || markdownFile;
-  fileContextMenu.querySelector('[data-file-action="open-document"]').hidden = !markdownFile;
-  fileContextMenu.querySelector('[data-file-action="open-presentation"]').hidden = !markdownFile;
+  const texFile = editableFile && /\.tex$/i.test(item.path);
+  fileContextMenu.querySelector('[data-file-action="open"]').hidden = !editableFile || markdownFile || texFile;
+  fileContextMenu.querySelector('[data-file-action="open-document"]').hidden = !(markdownFile || texFile);
+  fileContextMenu.querySelector('[data-file-action="open-presentation"]').hidden = !(markdownFile || texFile);
   fileContextMenu.querySelector('[data-file-action="new-file"]').hidden =
     item.type !== "directory";
   fileContextMenu.querySelector('[data-file-action="new-folder"]').hidden =
@@ -2423,10 +2424,10 @@ async function handleContextAction(action) {
   if (action === "open" && item.type === "file" && item.editable) {
     if (dirty) await saveCurrentFile();
     await openFile(item.path);
-  } else if (action === "open-document" && item.type === "file" && isMarkdownPath(item.path)) {
+  } else if (action === "open-document" && item.type === "file" && (isMarkdownPath(item.path) || /\.tex$/i.test(item.path))) {
     if (dirty) await saveCurrentFile();
     await openFile(item.path, { purposeOverride: "documents" });
-  } else if (action === "open-presentation" && item.type === "file" && isMarkdownPath(item.path)) {
+  } else if (action === "open-presentation" && item.type === "file" && (isMarkdownPath(item.path) || /\.tex$/i.test(item.path))) {
     if (dirty) await saveCurrentFile();
     await openFile(item.path, { purposeOverride: "presentations" });
   } else if (action === "new-file" && item.type === "directory") {
@@ -2451,9 +2452,20 @@ function isPresentationMarkdownPath(path) {
   return /\.slides\.md$/i.test(String(path || ""));
 }
 
+// PS-10: native Beamer mains are authored as LaTeX, not converted to Markdown.
+// This is an editor hint; the server independently validates before compiling.
+function isNativeBeamerSource(path, source) {
+  if (!/\.tex$/i.test(String(path || ""))) return false;
+  const withoutComments = String(source || "").split("\n").map(line =>
+    line.replace(/(^|[^\\])%(.*)$/, "$1")
+  ).join("\n");
+  return /\\documentclass\s*(?:\[[^\]]*\]\s*)?\{\s*beamer\s*\}/.test(withoutComments);
+}
+
 function currentPresentationKind() {
   if (isNotebookPath(currentFile)) return "notebook";
   if (isMarkdownPath(currentFile)) return "markdown";
+  if (isNativeBeamerSource(currentFile, editor.value)) return "latex";
   return "";
 }
 
@@ -2471,11 +2483,19 @@ function updatePresentationPurposeUI() {
       ? "Notebook Presentation"
       : kind === "markdown"
         ? "Markdown Presentation"
-        : "Select a .ipynb, .md, or .slides.md file";
+        : kind === "latex"
+          ? "Native Beamer Project (.tex)"
+          : "Select a .ipynb, .md, or Beamer .tex main file";
   }
 
   const notebookReady = presentationActive && kind === "notebook" && Boolean(notebookDocument);
   const markdownReady = presentationActive && kind === "markdown" && Boolean(currentFile);
+  const nativeReady = presentationActive && kind === "latex" && Boolean(currentFile);
+  const nativeBuild = document.getElementById("presentationNativeBuildBtn");
+  if (nativeBuild) {
+    nativeBuild.hidden = !nativeReady;
+    nativeBuild.disabled = !nativeReady;
+  }
   if (presentationPresentBtn) {
     presentationPresentBtn.disabled = !(notebookReady || markdownReady);
     presentationPresentBtn.title = notebookReady
@@ -2492,7 +2512,7 @@ function updatePresentationPurposeUI() {
         ? "Create an .ipynb backup beside this Markdown presentation"
         : "Open a notebook or Markdown presentation first";
   }
-  document.getElementById("presentationStyleBtn").disabled = !(notebookReady || markdownReady);
+  document.getElementById("presentationStyleBtn").disabled = !(notebookReady || markdownReady || nativeReady);
 
   if (!notebookWorkspace.hidden) {
     renderNotebook();
@@ -2519,7 +2539,8 @@ function setWorkbenchPurpose(purpose, { announce = true } = {}) {
     const kind = currentPresentationKind();
     if (kind === "notebook") setStatus("Presentation workspace · Notebook Presentation");
     else if (kind === "markdown") setStatus("Presentation workspace · Markdown Presentation");
-    else setStatus("Presentation workspace · select a notebook or Markdown presentation");
+    else if (kind === "latex") setStatus("Presentation workspace · Native Beamer Project");
+    else setStatus("Presentation workspace · select a notebook, Markdown or Beamer presentation");
   } else {
     setStatus(currentFile ? `Document workspace · ${currentFile}` : "Document workspace");
   }
@@ -3504,6 +3525,43 @@ async function createPresentationBackup() {
   }
 }
 
+async function findNativeBeamerMains() {
+  if (!currentProject) return;
+  const select = document.getElementById("presentationNativeMains");
+  const result = await api(`/api/presentations/${encodeURIComponent(currentProject)}/native-beamer`);
+  select.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = result.entrypoints.length ? "Open Beamer main…" : "No Beamer mains found";
+  select.appendChild(placeholder);
+  for (const path of result.entrypoints) {
+    const option = document.createElement("option");
+    option.value = path;
+    option.textContent = path;
+    select.appendChild(option);
+  }
+  select.hidden = false;
+  setStatus(`Found ${result.entrypoints.length} native Beamer main file(s) in the configured Documents Root.`);
+}
+
+async function buildNativeBeamerPresentation() {
+  if (currentPresentationKind() !== "latex" || !currentProject || !currentFile) return;
+  const project = currentProject;
+  const file = currentFile;
+  if (dirty) await saveCurrentFile();
+  setStatus("Compiling native Beamer PDF with local LaTeX tools…");
+  const result = await api(`/api/presentations/${encodeURIComponent(project)}/${encodeRelativePath(file)}/exports`, {
+    method: "POST", body: JSON.stringify({ renderer: "beamer", format: "pdf" }),
+  });
+  if (project !== currentProject || file !== currentFile) return;
+  compiledPreview = { project, target: file, url: result.download_url, stale: false };
+  refreshCompiledPdfPreview(result.download_url);
+  clearBuildDiagnostics();
+  showCompiledPdfPreview({ stale: false });
+  setStatus(`Native Beamer PDF: ${result.path}`);
+  await loadProjects(project, file);
+}
+
 // PS-08: renderer/style selection, slide conversion and notebook document exports
 // share a single presentation dialog and the source-aware /exports catalog.
 const presentationStyleDialog = document.getElementById("presentationStyleDialog");
@@ -3692,7 +3750,7 @@ async function openPresentationStyleDialog() {
   presentationStyleCandidate.disabled = true;
   document.getElementById("presentationStyleImportBtn").disabled = true;
   document.getElementById("presentationStyleSource").textContent = `${session.project} / ${session.file}`;
-  presentationStyleOutput.value = basename(session.file).replace(/\.(slides\.md|ipynb|markdown|md)$/i, "");
+  presentationStyleOutput.value = basename(session.file).replace(/\.(slides\.md|ipynb|markdown|md|tex)$/i, "");
   presentationStyleDialog.showModal();
   try {
     const [catalog, capabilities] = await Promise.all([
@@ -5100,6 +5158,18 @@ presentationBackupBtn?.addEventListener("click", () =>
   createPresentationBackup().catch(error => setStatus(`Backup failed: ${error.message}`)));
 document.getElementById("presentationStyleBtn")?.addEventListener("click", () =>
   presentationStyleAction(openPresentationStyleDialog()));
+document.getElementById("presentationNativeBuildBtn")?.addEventListener("click", () =>
+  buildNativeBeamerPresentation().catch(error => setStatus(`Native Beamer build failed: ${error.message}`)));
+document.getElementById("presentationFindNativeBtn")?.addEventListener("click", () =>
+  findNativeBeamerMains().catch(error => setStatus(`Beamer discovery failed: ${error.message}`)));
+document.getElementById("presentationNativeMains")?.addEventListener("change", event => {
+  const path = event.target.value;
+  if (!path) return;
+  (async () => {
+    if (dirty) await saveCurrentFile();
+    await openFile(path, { purposeOverride: "presentations" });
+  })().catch(error => setStatus(`Unable to open Beamer main: ${error.message}`));
+});
 document.getElementById("presentationStyleCloseBtn")?.addEventListener("click", () => presentationStyleDialog.close());
 presentationStyleRenderer?.addEventListener("change", () => refreshPresentationStyleSelection());
 presentationStyleSelection?.addEventListener("change", () => {

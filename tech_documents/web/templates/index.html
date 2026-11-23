@@ -89,10 +89,13 @@
       <div id="presentationToolbar" class="presentation-toolbar" hidden>
         <div class="presentation-toolbar-context">
           <strong>Presentation</strong>
-          <span id="presentationKindLabel">Select a notebook or Markdown presentation</span>
+          <span id="presentationKindLabel">Select a Markdown, notebook, or Beamer .tex presentation</span>
         </div>
         <div class="presentation-toolbar-actions">
           <button id="presentationPresentBtn" type="button" class="primary">Present</button>
+          <button id="presentationNativeBuildBtn" type="button" class="primary" hidden>Build Beamer PDF</button>
+          <button id="presentationFindNativeBtn" type="button" title="Find complete Beamer .tex entrypoints in the Documents Root">Find Beamer mains</button>
+          <select id="presentationNativeMains" aria-label="Open a native Beamer main file" hidden></select>
           <button id="presentationBackupBtn" type="button" title="Create the alternate .ipynb/.slides.md presentation beside the current source">Backup</button>
           <button id="presentationStyleBtn" type="button">Style &amp; export…</button>
         </div>

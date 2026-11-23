@@ -43,19 +43,24 @@ def prepare_build_workspace(project_path: Path, builds_dir: Path, build_id: str)
     return source_dir, output_dir
 
 
-def compile_with_latexmk(source_file: Path, output_dir: Path) -> subprocess.CompletedProcess[str]:
+def compile_with_latexmk(
+    source_file: Path, output_dir: Path, *, env: dict[str, str] | None = None,
+    no_shell_escape: bool = False,
+) -> subprocess.CompletedProcess[str]:
     command = [
         "latexmk",
         "-pdf",
         "-file-line-error",
         "-interaction=nonstopmode",
         "-halt-on-error",
+        *(["-no-shell-escape"] if no_shell_escape else []),
         f"-output-directory={output_dir}",
         source_file.name,
     ]
     return subprocess.run(
         command,
         cwd=source_file.parent,
+        env=env,
         capture_output=True,
         text=True,
         timeout=120,
@@ -63,9 +68,13 @@ def compile_with_latexmk(source_file: Path, output_dir: Path) -> subprocess.Comp
     )
 
 
-def compile_with_tectonic(source_file: Path, output_dir: Path) -> subprocess.CompletedProcess[str]:
+def compile_with_tectonic(
+    source_file: Path, output_dir: Path, *, env: dict[str, str] | None = None,
+    no_network: bool = False,
+) -> subprocess.CompletedProcess[str]:
     command = [
         "tectonic",
+        *(["--only-cached"] if no_network else []),
         "--keep-logs",
         "--keep-intermediates",
         "--outdir",
@@ -75,6 +84,7 @@ def compile_with_tectonic(source_file: Path, output_dir: Path) -> subprocess.Com
     return subprocess.run(
         command,
         cwd=source_file.parent,
+        env=env,
         capture_output=True,
         text=True,
         timeout=120,

@@ -143,7 +143,7 @@ class SharedPresentationExportTests(unittest.TestCase):
                 self.engine.presentations.export(request)
 
     def test_refuses_build_symlink_escape_and_unsupported_source(self):
-        self.engine.create_file(self.project, "theory.tex", "\\documentclass{beamer}")
+        self.engine.create_file(self.project, "theory.tex", "\\documentclass{article}")
         with self.assertRaises(UnsupportedFileTypeError):
             self.engine.presentation_export_capabilities(self.project, "theory.tex")
         outside = Path(self.temp.name) / "elsewhere"

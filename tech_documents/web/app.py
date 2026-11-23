@@ -311,6 +311,15 @@ def convert_presentation(project: str, filename: str) -> Response:
     return jsonify(result)
 
 
+@app.get("/api/presentations/<project>/native-beamer")
+def native_beamer_entrypoints(project: str) -> Response:
+    try:
+        paths = engine.native_beamer_entrypoints(project)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, "entrypoints": paths})
+
+
 @app.get("/api/presentations/<project>/<path:filename>/exports")
 def presentation_export_capabilities(project: str, filename: str) -> Response:
     try:

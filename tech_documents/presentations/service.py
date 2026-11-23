@@ -74,6 +74,20 @@ class PresentationService:
             request.source_kind, request.output_format,
             request.style.kind if request.style else None,
         ):
+            if request.source_kind not in capability.source_kinds:
+                # One renderer can now be available for native LaTeX while its
+                # Quarto-backed Markdown path is unavailable. Do not report
+                # the source as an invalid format in that situation.
+                planned = next((item for item in PLANNED_RENDERERS
+                                if item.renderer_id == request.renderer_id), None)
+                if planned and planned.supports(
+                    request.source_kind, request.output_format,
+                    request.style.kind if request.style else None,
+                ):
+                    raise PresentationError(
+                        "Install the local dependencies required for this presentation source "
+                        "(Quarto for Markdown and some notebook exports, or a TeX engine for Beamer)."
+                    )
             raise PresentationError("Renderer does not support the requested source, output, or style kind.")
         if request.style is not None and self.styles is not None:
             # A renderer's style support does not imply a package exists. PS-05

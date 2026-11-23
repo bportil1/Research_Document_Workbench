@@ -8,6 +8,7 @@ from .models import (
     StyleReference,
 )
 from .renderers import PLANNED_RENDERERS, PresentationRenderer
+from .native_beamer import is_beamer_entrypoint, is_beamer_source, discover_beamer_entrypoints
 from .legacy_adapters import ExistingExportRenderer, existing_export_renderers
 from .service import PresentationService
 from .previews import PresentationPreviewService, PreviewStatus, BeamerPreviewProvider
@@ -43,6 +44,9 @@ __all__ = [
     "PresentationStyleRegistry",
     "StyleAsset",
     "StyleManifest",
+    "is_beamer_entrypoint",
+    "is_beamer_source",
+    "discover_beamer_entrypoints",
     "BeamerInspection",
     "BeamerThemeCandidate",
     "inspect_beamer_source",

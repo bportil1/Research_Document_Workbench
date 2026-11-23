@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import binascii
 import hashlib
 from dataclasses import dataclass
@@ -48,6 +49,7 @@ from .presentations import (
     inspect_beamer_source, import_beamer_style, PresentationBuildProfile,
     PresentationProfileStore, style_manifest_digest, PresentationPreviewService,
 )
+from .presentations.native_beamer import is_beamer_entrypoint, discover_beamer_entrypoints
 from .paths import (
     ALLOWED_EXTENSIONS,
     NOTEBOOK_EXTENSIONS,
@@ -89,7 +91,8 @@ class DocumentEngine:
             self.presentation_styles, self.base_dir / ".workbench-presentation-previews",
         )
         self.presentations = PresentationService(
-            existing_export_renderers(self.notebook_exports, styles=self.presentation_styles), styles=self.presentation_styles,
+            existing_export_renderers(self.notebook_exports, styles=self.presentation_styles,
+                                      native_compile=self._compile_native_beamer), styles=self.presentation_styles,
         )
         self.ensure_directories()
 
@@ -544,6 +547,26 @@ class DocumentEngine:
         )
         return manifest.as_dict()
 
+    def native_beamer_entrypoints(self, project: str) -> list[str]:
+        """Discover complete Beamer mains under the configured local Documents Root."""
+        project_root = self.project_path(project).resolve()
+        document_root = self.documents_root_path(project).resolve()
+        if not document_root.is_relative_to(project_root):
+            raise InvalidPathError("Beamer documents root escapes its project.")
+        return [relative_to_project(project_root, document_root / name)
+                for name in discover_beamer_entrypoints(document_root)]
+
+    def _compile_native_beamer(self, project_root: Path, source_file: Path) -> CompilationResult:
+        """Run the existing compiler over a source snapshot with local TeX assets.
+
+        No Quarto conversion, Makefile execution or remote package installation.
+        """
+        return self._compile_latex_source(
+            project_path=project_root, documents_root=project_root,
+            source_file=source_file, builds_dir=self.builds_dir,
+            force=False, native_beamer=True,
+        )
+
     def _presentation_source(self, project: str, filename: str) -> tuple[Path, str]:
         source = self.editable_file_path(project, filename)
         if not source.is_file():
@@ -553,7 +576,9 @@ class DocumentEngine:
             return source, "notebook"
         if extension in {".md", ".markdown"}:
             return source, "markdown"
-        raise UnsupportedFileTypeError("Presentation export requires Markdown or a .ipynb notebook.")
+        if extension == ".tex" and is_beamer_entrypoint(source):
+            return source, "latex"
+        raise UnsupportedFileTypeError("Presentation export requires Markdown, a notebook, or a main Beamer .tex file.")
 
     def presentation_export_capabilities(self, project: str, filename: str) -> dict[str, Any]:
         """One source-aware catalog for rendered, converted and notebook outputs.
@@ -565,6 +590,16 @@ class DocumentEngine:
         renderers = self.presentations.compatible_renderers(
             source_kind=source_kind, available_only=False,
         )
+        if source_kind == "latex":
+            available = bool(shutil.which("latexmk") or shutil.which("tectonic"))
+            native = {
+                "id": "beamer:pdf", "kind": "render", "renderer": "beamer", "format": "pdf",
+                "label": "Native Beamer project — PDF", "available": available,
+                "reason": "Install latexmk/TeX Live or Tectonic to compile native Beamer." if not available else "",
+                "style_kinds": [],
+                "description": "Compile the existing Beamer project with its own preamble, theme and local assets (no conversion).",
+            }
+            return {"source_kind": "latex", "renderers": renderers, "outputs": [native]}
         notebook_caps = self.notebook_exports.capabilities()
         format_caps = {entry["id"]: entry for entry in notebook_caps["formats"]}
         targets = (("beamer", "pdf", "beamer"),
@@ -626,6 +661,8 @@ class DocumentEngine:
         if (planned is None or source_kind not in planned.source_kinds
                 or profile.output_format not in planned.output_formats):
             raise PresentationError("Unsupported presentation source, renderer, or output format.")
+        if source_kind == "latex" and profile.style is not None:
+            raise PresentationError("Native Beamer profiles cannot overlay installed themes.")
         if profile.style is None:
             return profile
         if profile.style.kind not in planned.style_kinds:
@@ -690,6 +727,10 @@ class DocumentEngine:
         """
         source, source_kind = self._presentation_source(project, filename)
         root = self.project_path(project).resolve()
+        if source_kind == "latex" and (conversion_target is not None or document_format is not None):
+            raise PresentationError("Native Beamer projects support direct PDF compilation, not source conversion.")
+        if source_kind == "latex" and style is not None:
+            raise PresentationError("Native Beamer uses the project theme and does not accept installed style overrides.")
         if conversion_target is not None or document_format is not None:
             if conversion_target is not None and document_format is not None:
                 raise PresentationError("Choose only one presentation export operation.")
@@ -749,7 +790,8 @@ class DocumentEngine:
             "source_kind": source_kind,
             "path": relative_to_project(root, output_path),
             "size": output_path.stat().st_size,
-            "engine": "nbconvert+reveal" if source_kind == "notebook" and renderer_id == "reveal" else "quarto",
+            "engine": ("latex-native" if source_kind == "latex" else
+                       "nbconvert+reveal" if source_kind == "notebook" and renderer_id == "reveal" else "quarto"),
         }
         if style is not None:
             response["style"] = {"identifier": style.identifier, "version": style.version, "kind": style.kind}
@@ -1235,6 +1277,7 @@ class DocumentEngine:
         source_file: Path,
         builds_dir: Path,
         force: bool,
+        native_beamer: bool = False,
     ) -> CompilationResult:
         source_file = source_file.resolve()
         project_path = project_path.resolve()
@@ -1243,6 +1286,8 @@ class DocumentEngine:
 
         if source_file.suffix.lower() != ".tex":
             raise UnsupportedFileTypeError("Only .tex files can be compiled.")
+        if native_beamer and not is_beamer_entrypoint(source_file):
+            raise PresentationError("Native Beamer compilation requires a main Beamer .tex source.")
         if not source_file.exists() or not source_file.is_file():
             raise ItemNotFoundError("LaTeX source does not exist.")
 
@@ -1296,7 +1341,17 @@ class DocumentEngine:
             )
 
         try:
-            result = compiler(build_source_file, output_dir)
+            if native_beamer:
+                # kpsewhich searches recursively below //; the final separator
+                # retains local installed TeX packages and avoids external calls.
+                env = dict(os.environ)
+                env["TEXINPUTS"] = f"{source_dir}//{os.pathsep}{env.get('TEXINPUTS', '')}"
+                if compiler is compile_with_latexmk:
+                    result = compiler(build_source_file, output_dir, env=env, no_shell_escape=True)
+                else:
+                    result = compiler(build_source_file, output_dir, env=env, no_network=True)
+            else:
+                result = compiler(build_source_file, output_dir)
         except subprocess.TimeoutExpired:
             diagnostic = {
                 "severity": "error", "code": "compile-timeout", "message": "LaTeX compilation timed out.",

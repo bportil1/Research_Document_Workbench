@@ -367,3 +367,37 @@ No Makefiles are run, no remote services are contacted, and no source content is
 rewritten. Theme previews are representative sample slides rather than guarantees
 of pixel-identical Quarto output. Additional preview providers can be registered
 later for Reveal.js and PowerPoint; those formats are not yet previewable.
+
+### PS-10: Native Beamer project editing and exports
+
+A `.tex` file containing a literal `\documentclass[...]{beamer}` is a native
+presentation *entrypoint*. PS-10 does not convert it to Markdown/notebooks or
+apply a second Beamer style over the project's existing `\usetheme`, preamble,
+styles, images, bibliography and split sources. The existing Workbench text
+editor can edit the main `.tex`, auxiliary `.tex`, `.sty` and `.cls` files. The
+Presentations wing now identifies native mains, has a **Find Beamer mains**
+selector scoped to the configured Documents Root, and includes **Build Beamer
+PDF** plus its unified **Style & export…** workflow.
+
+`GET /api/presentations/<project>/native-beamer` returns detected main files.
+The existing unified `GET/POST /api/presentations/<project>/<filename>/exports`
+endpoint exposes only `beamer:pdf` for a native main; it requires `latexmk` or
+Tectonic but **not Quarto**. Source fragments and non-Beamer `.tex` files cannot
+be exported as presentations. Native export settings may be saved using the
+same PS-06 profile store (renderer `beamer`, format `pdf`, no extra style).
+
+The Beamer adapter calls the Workbench's existing LaTeX compilation service,
+using its preflight, diagnostics, isolated source snapshot, compiler selection
+and build cache. For native builds the snapshot is given recursive `TEXINPUTS`
+so nested local `beamertheme*.sty` resources can be resolved without modifying
+project sources or requiring a global TeX install of the theme. `latexmk` is
+invoked with `-no-shell-escape`; the Tectonic fallback uses `--only-cached` to
+prevent network package fetching. A completed PDF is copied atomically to the
+project's `builds/presentations/` directory. Failed compilations do not publish
+a new result or rewrite the original source.
+
+This is a workflow convenience, **not a security sandbox**. TeX macros can still
+read local files; use only trusted third-party Beamer projects, or run the
+Workbench in an OS-level sandbox. Importing native projects is done through
+existing Workbench project/folder attachment, not the PS-04 theme-only importer.
+There is no Makefile execution or remote rendering service in this path.
