@@ -45,6 +45,7 @@ from .notebook_exports import NotebookExportService
 from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
 from .presentations import (
     PresentationExportRequest, PresentationService, PresentationStyleRegistry, existing_export_renderers,
+    inspect_beamer_source, import_beamer_style,
 )
 from .paths import (
     ALLOWED_EXTENSIONS,
@@ -510,6 +511,23 @@ class DocumentEngine:
         return [style.as_dict() for style in self.presentation_styles.list_styles(
             kind=kind, renderer_id=renderer_id,
         )]
+
+    def inspect_beamer_styles(self, source: str | Path) -> dict[str, object]:
+        """Inspect a local Beamer directory/ZIP without compiling or installing it."""
+        return inspect_beamer_source(source).as_dict()
+
+    def import_beamer_style(
+        self, source: str | Path, *, version: str,
+        selector: str | None = None, identifier: str | None = None,
+        label: str | None = None, description: str = "",
+    ) -> dict[str, object]:
+        """Install one selected theme into the local immutable style registry."""
+        manifest = import_beamer_style(
+            self.presentation_styles, source, version=version,
+            selector=selector, identifier=identifier, label=label,
+            description=description,
+        )
+        return manifest.as_dict()
 
     def _presentation_source(self, project: str, filename: str) -> tuple[Path, str]:
         source = self.editable_file_path(project, filename)

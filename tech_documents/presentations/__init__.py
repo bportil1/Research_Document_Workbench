@@ -10,6 +10,9 @@ from .models import (
 from .renderers import PLANNED_RENDERERS, PresentationRenderer
 from .legacy_adapters import ExistingExportRenderer, existing_export_renderers
 from .service import PresentationService
+from .beamer_importer import (
+    BeamerInspection, BeamerThemeCandidate, import_beamer_style, inspect_beamer_source,
+)
 from .style_registry import (
     InstalledStyle,
     PresentationStyleRegistry,
@@ -32,4 +35,8 @@ __all__ = [
     "PresentationStyleRegistry",
     "StyleAsset",
     "StyleManifest",
+    "BeamerInspection",
+    "BeamerThemeCandidate",
+    "inspect_beamer_source",
+    "import_beamer_style",
 ]

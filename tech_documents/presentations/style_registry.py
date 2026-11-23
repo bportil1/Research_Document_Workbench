@@ -112,6 +112,7 @@ class StyleManifest:
     description: str = ""
     source_name: str = ""
     schema_version: int = STYLE_MANIFEST_SCHEMA
+    entrypoint: str = ""
 
     def __post_init__(self) -> None:
         _validate_token(self.identifier, "Style identifier")
@@ -129,6 +130,10 @@ class StyleManifest:
             raise ValueError("A style must declare compatible renderers.")
         for renderer in self.renderer_ids:
             _validate_token(renderer, "Renderer ID")
+        if self.entrypoint:
+            _asset_path(self.entrypoint)
+            if self.assets and self.entrypoint not in {asset.path for asset in self.assets}:
+                raise ValueError("Style entrypoint must be a declared asset.")
         if len(set(self.renderer_ids)) != len(self.renderer_ids):
             raise ValueError("A style cannot repeat renderer IDs.")
         if not isinstance(self.assets, tuple) or len(self.assets) > _MAX_ASSETS:
@@ -145,7 +150,7 @@ class StyleManifest:
         return StyleReference(self.identifier, self.version, self.kind)
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        value = {
             "schema_version": self.schema_version,
             "identifier": self.identifier,
             "version": self.version,
@@ -156,13 +161,16 @@ class StyleManifest:
             "renderer_ids": list(self.renderer_ids),
             "assets": [asset.as_dict() for asset in self.assets],
         }
+        if self.entrypoint:
+            value["entrypoint"] = self.entrypoint
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "StyleManifest":
         if not isinstance(value, dict):
             raise ValueError("Style manifest must be a JSON object.")
         fields = {"schema_version", "identifier", "version", "kind", "label", "description", "source_name", "renderer_ids", "assets"}
-        if set(value) != fields:
+        if set(value) not in (fields, fields | {"entrypoint"}):
             raise ValueError("Style manifest fields do not match the supported schema.")
         renderers = value["renderer_ids"]
         assets = value["assets"]
@@ -177,6 +185,7 @@ class StyleManifest:
             identifier=value["identifier"], version=value["version"], kind=value["kind"],
             label=value["label"], description=value["description"], source_name=value["source_name"],
             renderer_ids=tuple(renderers), assets=tuple(decoded_assets), schema_version=value["schema_version"],
+            entrypoint=value.get("entrypoint", ""),
         )
 
 
@@ -223,6 +232,7 @@ class PresentationStyleRegistry:
         self, *, identifier: str, version: str, kind: str, label: str,
         renderer_ids: Iterable[str], source_dir: str | Path | None = None,
         asset_paths: Iterable[str] = (), description: str = "", source_name: str = "",
+        entrypoint: str = "",
     ) -> StyleManifest:
         """Copy an explicit asset set into a new, pinned style version.
 
@@ -248,7 +258,7 @@ class PresentationStyleRegistry:
         # Preflight manifest fields before creating directories or copying assets.
         renderers = tuple(renderer_ids)
         StyleManifest(identifier, version, kind, label, renderers,
-                      description=description, source_name=source_name)
+                      description=description, source_name=source_name, entrypoint=entrypoint)
         # Never call mkdir(parents=True) through an untrusted registry
         # component: a pre-existing symlink could redirect its side effects.
         self.root.mkdir(parents=True, exist_ok=True)
@@ -286,7 +296,7 @@ class PresentationStyleRegistry:
             manifest = StyleManifest(
                 identifier, version, kind, label, renderers,
                 assets=tuple(sorted(asset_records, key=lambda entry: entry.path)),
-                description=description, source_name=source_name,
+                description=description, source_name=source_name, entrypoint=entrypoint,
             )
             (staging_path / "manifest.json").write_text(
                 json.dumps(manifest.as_dict(), sort_keys=True, indent=2) + "\n", encoding="utf-8",

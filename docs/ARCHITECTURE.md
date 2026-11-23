@@ -151,3 +151,47 @@ Runtime-independent style metadata and assets are separate from presentation
 sources, which remain unchanged; no style persistence is written into project
 content in this sprint. Installed styles are a local per-Workbench registry and
 must be explicitly exported or reinstalled to transfer between machines.
+
+## PS-04 — Local Beamer directory/ZIP discovery and theme import
+
+`tech_documents.presentations.inspect_beamer_source(source)` inspects a local
+folder or `.zip` **without extracting it**, executing build scripts, or invoking
+LaTeX. It reports independently importable `beamertheme*.sty` candidates,
+Beamer `.tex` project entrypoints, project-to-theme name associations, external
+TeX package *names* (not verified installations), and possible unresolved
+static dependencies. This is a best-effort static inspection: dynamic TeX macros,
+files referenced outside the theme bundle and TeX distribution configuration
+may still require manual attention.
+
+`import_beamer_style(registry, source, version=..., selector=...)` installs **only
+the selected theme directory's styles and supporting assets**, not the source
+presentation's slide content, Makefiles, or unrelated PDFs. If more than one
+theme is discovered, the exact inspection-provided `selector` is required.
+Imported assets are flattened relative to the selected theme directory, so a
+nested project bundle yields a self-contained style package with, for example,
+`assets/beamerthemeMSU.sty` and `assets/MSUlogoV.png`. The PS-03 registry
+retains its existing manifest schema, with an optional renderer-neutral
+`entrypoint` field recording the primary theme file. Old PS-03 manifests without
+`entrypoint` continue to load and resolve unchanged. Imported styles remain
+immutable and version-pinned, with SHA-256 verification on resolution.
+
+ZIPs are validated for traversal, absolute/Windows paths, duplicate names,
+symlinks/special entries, encrypted entries, entry count/size, overall expanded
+size, and suspicious compression ratios. Directories similarly reject symlinks,
+nonregular files, and oversized file sets. Only theme resources are copied into
+a staging directory; no source files are modified and no arbitrary Makefile is
+run. Imported LaTeX is still **not trusted to execute**: compilation requires
+separate runtime controls during PS-05.
+
+`DocumentEngine.inspect_beamer_styles(path)` and
+`DocumentEngine.import_beamer_style(path, version=..., selector=...)` provide
+browser-independent application entry points. Neither adds an HTTP route or UI
+control yet; PS-07 covers the style selector and theme management interface.
+The PS-02 existing exporters continue to reject custom styles until PS-05.
+
+Acceptance case: the `csci447.zip` project has two inspected `theory.tex`
+entrypoints and one reusable MSU theme at
+`csci447/theory_week/beamerthemeNISL_MSU/beamerthemeMSU.sty`, with four `.sty`
+files and three logos registered. The standalone style package includes no
+slide content or project Makefile. This tests import and persistence only, not
+successful Beamer compilation or the future export style selection workflow.
