@@ -144,7 +144,14 @@ class PresentationFoundationTests(unittest.TestCase):
         engine = DocumentEngine(self.root / "engine")
         descriptions = engine.presentation_renderer_capabilities()
         self.assertTrue(any(item["id"] == "beamer" for item in descriptions))
-        self.assertFalse(any(item["available"] for item in descriptions))
+        # PS-02 connects real adapters: availability depends on installed local
+        # Quarto, TeX, nbconvert and vendored Reveal.js assets.
+        notebook_caps = {item["id"]: item for item in engine.notebook_exports.capabilities()["formats"]}
+        by_renderer = {item["id"]: item for item in descriptions}
+        self.assertEqual(by_renderer["beamer"]["available"], notebook_caps["beamer"]["available"])
+        self.assertEqual(by_renderer["powerpoint"]["available"], notebook_caps["pptx"]["available"])
+        self.assertEqual(by_renderer["reveal"]["available"],
+                         notebook_caps["reveal"]["available"] or bool(engine.notebook_exports._quarto()))
         self.assertTrue(hasattr(engine.notebook_exports, "export"))
         self.assertTrue(hasattr(engine, "presentations"))
 

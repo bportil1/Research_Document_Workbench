@@ -308,6 +308,34 @@ def convert_presentation(project: str, filename: str) -> Response:
     return jsonify(result)
 
 
+@app.get("/api/presentations/<project>/<path:filename>/exports")
+def presentation_export_capabilities(project: str, filename: str) -> Response:
+    try:
+        result = engine.presentation_export_capabilities(project, filename)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify(result)
+
+
+@app.post("/api/presentations/<project>/<path:filename>/exports")
+def export_presentation(project: str, filename: str) -> Response:
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = engine.export_presentation(
+            project,
+            filename,
+            renderer_id=str(payload.get("renderer", "")),
+            output_format=str(payload.get("format", "")),
+            output_name=str(payload.get("output_name", "") or "") or None,
+        )
+    except (DocumentEngineError, ValueError) as exc:
+        if isinstance(exc, DocumentEngineError):
+            return _json_engine_error(exc)
+        return _json_engine_error(DocumentEngineError(str(exc)))
+    result["download_url"] = f"/api/download/{safe_name(project)}/{result['path']}"
+    return jsonify(result)
+
+
 @app.post("/api/notebooks/<project>/<path:filename>/exports")
 def export_notebook(project: str, filename: str) -> Response:
     payload = request.get_json(force=True)

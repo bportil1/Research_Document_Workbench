@@ -43,7 +43,9 @@ from .notebooks import NotebookRuntime, notebook_dependencies
 from .latex_tools import parse_latex_log, preflight_latex
 from .notebook_exports import NotebookExportService
 from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
-from .presentations import PresentationService
+from .presentations import (
+    PresentationExportRequest, PresentationService, existing_export_renderers,
+)
 from .paths import (
     ALLOWED_EXTENSIONS,
     NOTEBOOK_EXTENSIONS,
@@ -79,7 +81,7 @@ class DocumentEngine:
         self.project_registry_path = self.base_dir / ".workbench-projects.json"
         self.notebooks = NotebookRuntime()
         self.notebook_exports = NotebookExportService()
-        self.presentations = PresentationService()  # PS-01: adapters are added in later sprints
+        self.presentations = PresentationService(existing_export_renderers(self.notebook_exports))
         self.ensure_directories()
 
     # ------------------------------------------------------------------
@@ -495,12 +497,65 @@ class DocumentEngine:
         return self.notebooks.shutdown(file_path)
 
     def presentation_renderer_capabilities(self) -> list[dict[str, object]]:
-        """Describe shared presentation targets without changing legacy exports.
-
-        Currently these targets are unavailable until the corresponding adapter
-        is registered. Use notebook_export_capabilities for existing exports.
-        """
+        """Report locally available presentation renderers and source formats."""
         return self.presentations.capabilities()
+
+    def _presentation_source(self, project: str, filename: str) -> tuple[Path, str]:
+        source = self.editable_file_path(project, filename)
+        if not source.is_file():
+            raise ItemNotFoundError("Presentation source does not exist.")
+        extension = source.suffix.lower()
+        if extension in NOTEBOOK_EXTENSIONS:
+            return source, "notebook"
+        if extension in {".md", ".markdown"}:
+            return source, "markdown"
+        raise UnsupportedFileTypeError("Presentation export requires Markdown or a .ipynb notebook.")
+
+    def presentation_export_capabilities(self, project: str, filename: str) -> dict[str, Any]:
+        """Source-specific renderer discovery for future shared presentation UIs."""
+        _, source_kind = self._presentation_source(project, filename)
+        return {
+            "source_kind": source_kind,
+            "renderers": self.presentations.compatible_renderers(
+                source_kind=source_kind, available_only=False,
+            ),
+        }
+
+    def export_presentation(
+        self,
+        project: str,
+        filename: str,
+        *,
+        renderer_id: str,
+        output_format: str,
+        output_name: str | None = None,
+    ) -> dict[str, Any]:
+        """One entry point for Markdown and notebook presentation exports.
+
+        Style references and renderer options are added after the style registry
+        and renderer-specific configuration have been implemented.
+        """
+        source, source_kind = self._presentation_source(project, filename)
+        root = self.project_path(project).resolve()
+        request = PresentationExportRequest(
+            source_path=source,
+            project_root=root,
+            source_kind=source_kind,
+            renderer_id=renderer_id,
+            output_format=output_format,
+            output_name=output_name,
+        )
+        result = self.presentations.export(request)
+        output_path = result.output_path.resolve()
+        return {
+            "ok": True,
+            "renderer": result.renderer_id,
+            "format": result.output_format,
+            "source_kind": source_kind,
+            "path": relative_to_project(root, output_path),
+            "size": output_path.stat().st_size,
+            "engine": "nbconvert+reveal" if source_kind == "notebook" and renderer_id == "reveal" else "quarto",
+        }
 
     def notebook_capabilities(self) -> dict[str, Any]:
         return {
@@ -524,6 +579,25 @@ class DocumentEngine:
         output_name: str | None = None,
     ) -> dict[str, Any]:
         notebook_path = self._notebook_path(project, filename)
+        presentation_targets = {
+            "reveal": ("reveal", "html"),
+            "pptx": ("powerpoint", "pptx"),
+            "beamer": ("beamer", "pdf"),
+        }
+        if format_id in presentation_targets:
+            renderer, target = presentation_targets[format_id]
+            result = self.export_presentation(
+                project, filename, renderer_id=renderer,
+                output_format=target, output_name=output_name,
+            )
+            # Keep the legacy notebook endpoint's response contract stable.
+            return {
+                "ok": True,
+                "format": format_id,
+                "path": result["path"],
+                "size": result["size"],
+                "engine": result["engine"],
+            }
         return self.notebook_exports.export(
             notebook_path,
             project_root=self.project_path(project),

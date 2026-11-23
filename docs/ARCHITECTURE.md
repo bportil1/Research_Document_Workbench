@@ -75,3 +75,42 @@ registered. PS-02 will connect existing exporters to the shared entry point;
 PS-03 will add a persistent style registry; PS-04/PS-05 will import and render
 Beamer themes (including the `csci447` acceptance fixture). No new build
 commands, third-party dependencies or network access are introduced by PS-01.
+
+## PS-02 — Unified presentation exports (existing engines)
+
+`DocumentEngine.export_presentation` is the common browser-independent entry
+point for Markdown (`.md`, `.markdown`) and notebook (`.ipynb`) slide exports.
+`DocumentEngine.presentation_export_capabilities` reports renderers that can
+handle a particular source on the current machine. The shared
+`PresentationService` registers three `ExistingExportRenderer` adapters:
+
+- **Beamer PDF**: Quarto and a local LaTeX engine; notebook rendering delegates
+  to `NotebookExportService` and Markdown rendering uses local Quarto directly.
+- **Reveal.js HTML**: notebooks delegate to the existing offline nbconvert and
+  vendored-assets export; Markdown uses Quarto `revealjs` (the HTML and local
+  resources come from Quarto's renderer, not the notebook assets).
+- **PowerPoint PPTX**: Quarto, using the existing notebook exporter for
+  `.ipynb` and directly rendering Markdown presentations otherwise.
+
+The shared adapters reject custom styles and arbitrary build options until
+registry and style-aware rendering support are implemented in later sprints.
+Markdown Quarto renders explicitly use `--no-execute` and leave source text
+untouched. All output stays under the selected project. Notebook exports keep
+using `builds/notebooks/`; Markdown presentation exports use
+`builds/presentations/`. Non-presentation notebook exports stay on the existing
+`NotebookExportService` path. Presentation formats on the existing notebook
+export endpoint now dispatch through the common service but retain their
+legacy response keys, format IDs and output paths.
+
+The reusable engine exposes the above functionality without Flask. Optional
+HTTP routes are:
+
+- `GET /api/presentations/<project>/<filename>/exports`: renderer capabilities
+  scoped to the requested Markdown/notebook source.
+- `POST /api/presentations/<project>/<filename>/exports` with JSON
+  `{ "renderer": "beamer|reveal|powerpoint", "format": "pdf|html|pptx",
+  "output_name": "optional" }`: runs an available export. The server response
+  includes project-relative output path and download URL.
+
+No new graphical controls, theme import, style persistence, or native `.tex`
+rendering are introduced in PS-02. Those remain separately scheduled.
