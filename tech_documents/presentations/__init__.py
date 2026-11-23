@@ -14,6 +14,10 @@ from .service import PresentationService
 from .previews import PresentationPreviewService, PreviewStatus, BeamerPreviewProvider
 from .profiles import PresentationBuildProfile, PresentationProfileStore, style_manifest_digest
 from .asset_style_importer import inspect_asset_style_source, import_asset_style
+from .style_families import (
+    BrandingTokens, StyleFamilyVariant, StyleFamilyManifest, PresentationStyleFamilyRegistry,
+)
+from .style_packages import export_style_bundle, import_style_bundle
 from .beamer_importer import (
     BeamerInspection, BeamerThemeCandidate, import_beamer_style, inspect_beamer_source,
 )
@@ -52,6 +56,8 @@ __all__ = [
     "BeamerThemeCandidate",
     "inspect_beamer_source",
     "import_beamer_style",
+    "BrandingTokens", "StyleFamilyVariant", "StyleFamilyManifest",
+    "PresentationStyleFamilyRegistry", "export_style_bundle", "import_style_bundle",
     "inspect_asset_style_source",
     "import_asset_style",
 ]

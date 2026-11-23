@@ -433,3 +433,72 @@ CSS/PPTX preview providers are not included in PS-11.
 Verify the Quarto CLI behavior and relative CSS asset packaging against the
 installed Quarto version in the user's local environment; CI uses simulated
 local Quarto calls because the validation runtime lacks Quarto.
+
+
+### PS-12: Renderer-aware style families and offline portable bundles
+
+The presentation subsystem now has two separate persistent catalogs:
+
+- `PresentationStyleRegistry` installs **immutable, independently verifiable** Beamer,
+  Reveal.js, and PowerPoint style versions under `.workbench-presentation-styles/styles/`.
+- `PresentationStyleFamilyRegistry` stores **immutable family manifests** under
+  `.workbench-presentation-styles/families/`. A family associates **one pinned style per
+  renderer**, recording the exact style manifest SHA-256 and an optional declared logo
+  asset already included in that variant. Removing a family never removes its styles.
+  The Workbench API prevents uninstalling a style while it is referenced by a family.
+
+Family manifests have a strict schema: `identifier`, `version`, `label`,
+`description`, `branding` (`colors`, `fonts`), and `variants` with pinned style
+references, manifest hashes, renderer-specific branding tokens, and optional
+logo assets. Colors require `#RRGGBB`. The accepted color tokens are `primary`,
+`secondary`, `accent`, `background`, and `foreground`; font tokens are `heading`,
+`body`, and `monospace`. The stored branding and renderer-specific tokens are
+**declarative metadata**, not instructions for automatically modifying Beamer
+`.sty`, Reveal.js CSS, or PowerPoint templates. Choosing a family variant selects
+its existing, verified renderer style; existing document profiles remain pinned
+to that exact style. This avoids falsely claiming visual equivalence across
+unrelated rendering engines. Per-renderer styling changes remain governed by
+the imported theme's own format.
+
+`style_packages.py` implements a deterministic, offline ZIP format containing:
+
+```
+bundle.json
+styles/<kind>/<identifier>/<version>/manifest.json
+styles/<kind>/<identifier>/<version>/assets/<registered asset paths>
+```
+
+A standalone style bundle contains one style, with `family: null`. A family
+bundle contains precisely its variant styles and the family manifest. Export
+checks installed asset integrity. Import validates schemas, archive member
+names and types, total/member sizes, exact member sets, SHA-256 asset contents,
+renderer compatibility, family fingerprints, and PS-11 CSS/PPTX/SVG safety
+rules. It stages files temporarily, never executes imported scripts or LaTeX,
+reuses identical installed versions, rejects divergent versions, and rolls
+back newly installed styles if an import fails. The family is installed last.
+Theme packages may still depend on **local** fonts/TeX packages not included in
+the archive; compilation and preview of imported TeX is a separate *explicit*
+trusted-project action and is not a security sandbox.
+
+Reusable engine API:
+
+- `presentation_style_family_catalog(renderer_id=None)`
+- `create_presentation_style_family(...)`
+- `export_presentation_style_bundle(destination, style=... | family_id=..., family_version=...)`
+- `import_presentation_style_bundle(source)`
+- `uninstall_presentation_style(reference)` (family dependency guard)
+
+Local browser routes:
+
+- `GET/POST /api/presentation-style-families`
+- `DELETE /api/presentation-style-families/<identifier>/<version>`
+- `GET /api/presentation-style-families/<identifier>/<version>/bundle`
+- `GET /api/presentation-styles/<kind>/<identifier>/<version>/bundle`
+- `POST /api/presentation-style-bundles/import` (multipart local ZIP)
+
+The **Style & export** dialog includes a family selector (with an explicit
+**Use variant** action), local brand-token inputs, single-style/family ZIP
+exports, and portable ZIP import. Browser uploads are subject to Flask's
+existing 40 MiB upload limit. A portable bundle is a local file, never an
+external URL or cloud service. Family choices never mutate the active
+presentation source or change its saved profile implicitly.

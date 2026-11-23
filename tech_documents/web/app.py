@@ -16,7 +16,7 @@ from flask import (
 )
 
 from ..api import DocumentEngine
-from ..presentations import StyleReference, PresentationError
+from ..presentations import StyleReference, PresentationError, BrandingTokens
 from ..diagrams import DiagramSyntaxError
 from ..errors import DocumentEngineError
 from ..paths import safe_name
@@ -464,11 +464,112 @@ def import_presentation_style() -> Response:
     return jsonify({"ok": True, "style": manifest}), 201
 
 
+# PS-12: portable, local-only style families and immutable ZIP bundles.
+@app.get("/api/presentation-style-families")
+def presentation_style_families() -> Response:
+    try:
+        families = engine.presentation_style_family_catalog()
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"families": families})
+
+
+@app.post("/api/presentation-style-families")
+def create_presentation_style_family() -> Response:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _json_engine_error(PresentationError("Family request must be a JSON object."))
+    try:
+        if set(payload) != {"identifier", "version", "label", "description", "branding", "variants"}:
+            raise PresentationError("Invalid style family request fields.")
+        selections = payload["variants"]
+        if not isinstance(selections, list) or not 1 <= len(selections) <= 16:
+            raise PresentationError("Style family needs 1–16 renderer variants.")
+        variants, overrides, logos = {}, {}, {}
+        for item in selections:
+            if not isinstance(item, dict) or set(item) != {"renderer_id", "style", "branding", "logo_asset"}:
+                raise PresentationError("Invalid renderer variant selection.")
+            renderer = item["renderer_id"]
+            style = item["style"]
+            if renderer in variants or not isinstance(style, dict) or set(style) != {"kind", "identifier", "version"}:
+                raise PresentationError("Repeated renderer or invalid style reference.")
+            variants[renderer] = StyleReference(**style)
+            overrides[renderer] = BrandingTokens.from_dict(item["branding"])
+            logos[renderer] = item["logo_asset"]
+        family = engine.create_presentation_style_family(
+            identifier=payload["identifier"], version=payload["version"],
+            label=payload["label"], description=payload["description"],
+            branding=BrandingTokens.from_dict(payload["branding"]),
+            variants=variants, overrides=overrides, logos=logos,
+        )
+    except (DocumentEngineError, ValueError, TypeError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"ok": True, "family": family}), 201
+
+
+@app.delete("/api/presentation-style-families/<identifier>/<version>")
+def delete_presentation_style_family(identifier: str, version: str) -> Response:
+    try:
+        engine.presentation_style_families.uninstall(identifier, version)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"ok": True})
+
+
+def _download_style_bundle(*, style=None, family_id=None, family_version=None):
+    # A response-local tempfile is needed only while Flask reads send_file.
+    # The response must include the actual archive bytes before cleanup.
+    temporary = tempfile.TemporaryDirectory(prefix="workbench-export-bundle-")
+    try:
+        target = Path(temporary.name) / "presentation-styles.zip"
+        engine.export_presentation_style_bundle(target, style=style, family_id=family_id,
+                                                family_version=family_version)
+        response = send_file(target, mimetype="application/zip", as_attachment=True,
+                             download_name="presentation-styles.zip")
+        response.headers["Cache-Control"] = "private, no-store"
+        response.call_on_close(temporary.cleanup)
+        return response
+    except Exception:
+        temporary.cleanup()
+        raise
+
+
+@app.get("/api/presentation-style-families/<identifier>/<version>/bundle")
+def download_presentation_style_family(identifier: str, version: str) -> Response:
+    try:
+        return _download_style_bundle(family_id=identifier, family_version=version)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+
+
+@app.get("/api/presentation-styles/<kind>/<identifier>/<version>/bundle")
+def download_portable_presentation_style(kind: str, identifier: str, version: str) -> Response:
+    try:
+        return _download_style_bundle(style=StyleReference(identifier=identifier, version=version, kind=kind))
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+
+
+@app.post("/api/presentation-style-bundles/import")
+def upload_portable_presentation_styles() -> Response:
+    archive = request.files.get("archive")
+    if archive is None or Path(archive.filename or "").suffix.lower() != ".zip":
+        return _json_engine_error(PresentationError("Choose a local portable presentation .zip package."))
+    try:
+        with tempfile.TemporaryDirectory(prefix="workbench-import-bundle-") as temporary:
+            target = Path(temporary) / "presentation-styles.zip"
+            archive.save(target)
+            result = engine.import_presentation_style_bundle(target)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify({"ok": True, **result}), 201
+
+
 @app.delete("/api/presentation-styles/<kind>/<identifier>/<version>")
 def uninstall_presentation_style(kind: str, identifier: str, version: str) -> Response:
     try:
         reference = StyleReference(identifier=identifier, version=version, kind=kind)
-        engine.presentation_styles.uninstall(reference)
+        engine.uninstall_presentation_style(reference)
     except (DocumentEngineError, ValueError, OSError) as exc:
         return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
     return jsonify({"ok": True})

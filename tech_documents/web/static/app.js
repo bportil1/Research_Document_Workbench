@@ -3582,6 +3582,8 @@ const presentationStyleZip = document.getElementById("presentationStyleZip");
 const presentationStyleImportKind = document.getElementById("presentationStyleImportKind");
 const presentationStylePath = document.getElementById("presentationStylePath");
 let presentationStyleSession = null;
+const presentationFamilySelection = document.getElementById("presentationFamilySelection");
+const presentationFamilyStatus = document.getElementById("presentationFamilyStatus");
 
 function presentationStyleUrl(session, suffix = "") {
   return `/api/presentations/${encodeURIComponent(session.project)}/${session.file.split("/").map(encodeURIComponent).join("/")}${suffix}`;
@@ -3739,14 +3741,154 @@ async function loadPresentationStyleCatalog({ desiredRef = null } = {}) {
   refreshPresentationStyleSelection(desiredRef);
 }
 
+// PS-12: family selection is an explicit mapping to an existing registered
+// renderer-specific style. Branding tokens do not silently rewrite .sty/CSS/PPTX.
+function selectedPresentationFamily() {
+  const session = presentationStyleSession;
+  const index = Number(presentationFamilySelection?.value);
+  return session && presentationFamilySelection.value !== "" && Number.isInteger(index)
+    ? session.families?.[index] || null : null;
+}
+
+async function loadPresentationStyleFamilies() {
+  const session = presentationStyleSession;
+  if (!session) return;
+  const response = await api("/api/presentation-style-families");
+  if (session !== presentationStyleSession) return;
+  session.families = response.families;
+  presentationFamilySelection.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "No family selected";
+  presentationFamilySelection.appendChild(none);
+  for (let i = 0; i < response.families.length; i++) {
+    const family = response.families[i];
+    const option = document.createElement("option");
+    option.value = String(i);
+    option.textContent = `${family.label} — ${family.identifier} v${family.version}`;
+    presentationFamilySelection.appendChild(option);
+  }
+  for (const renderer of ["beamer", "reveal", "powerpoint"]) {
+    const selector = document.getElementById(`presentationFamily${renderer[0].toUpperCase()}${renderer.slice(1)}`);
+    selector.replaceChildren();
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "No variant";
+    selector.appendChild(blank);
+    for (let i = 0; i < session.styles.length; i++) {
+      const style = session.styles[i];
+      if (style.kind !== renderer || !style.renderer_ids.includes(renderer)) continue;
+      const option = document.createElement("option");
+      option.value = String(i);
+      option.textContent = `${style.label} — v${style.version}`;
+      selector.appendChild(option);
+    }
+  }
+}
+
+function usePresentationFamilyVariant() {
+  const family = selectedPresentationFamily();
+  const choice = chosenPresentationTarget();
+  if (!family || choice?.kind !== "render") throw new Error("Choose a family and a rendered output format.");
+  const variant = family.variants.find(item => item.renderer_id === choice.renderer);
+  if (!variant) throw new Error("This family has no variant for the selected renderer.");
+  refreshPresentationStyleSelection(variant.style);
+  if (!selectedPresentationStyle()) throw new Error("The family's pinned style is not installed or compatible.");
+  presentationFamilyStatus.textContent = `Selected ${family.label}: ${variant.style.identifier} v${variant.style.version}. Save the profile to retain it.`;
+}
+
+async function createPresentationFamily() {
+  const session = presentationStyleSession;
+  if (!session) return;
+  const variants = [];
+  for (const renderer of ["beamer", "reveal", "powerpoint"]) {
+    const control = document.getElementById(`presentationFamily${renderer[0].toUpperCase()}${renderer.slice(1)}`);
+    if (!control.value) continue;
+    const style = session.styles[Number(control.value)];
+    if (!style) throw new Error("A selected family variant no longer exists.");
+    variants.push({ renderer_id: renderer, style: {
+      kind: style.kind, identifier: style.identifier, version: style.version,
+    }, branding: { colors: {}, fonts: {} }, logo_asset: "" });
+  }
+  if (!variants.length) throw new Error("Choose at least one installed variant.");
+  const font = document.getElementById("presentationFamilyFont").value.trim();
+  const response = await api("/api/presentation-style-families", {
+    method: "POST", body: JSON.stringify({
+      identifier: document.getElementById("presentationFamilyId").value.trim(),
+      version: document.getElementById("presentationFamilyVersion").value.trim(),
+      label: document.getElementById("presentationFamilyLabel").value.trim(),
+      description: "",
+      branding: { colors: {
+        primary: document.getElementById("presentationFamilyPrimary").value,
+        accent: document.getElementById("presentationFamilyAccent").value,
+      }, fonts: font ? { body: font } : {} }, variants,
+    }),
+  });
+  if (session !== presentationStyleSession) return;
+  await loadPresentationStyleFamilies();
+  const index = session.families.findIndex(item => item.identifier === response.family.identifier && item.version === response.family.version);
+  if (index >= 0) presentationFamilySelection.value = String(index);
+  presentationFamilyStatus.textContent = "Saved pinned family locally. Branding metadata does not override a renderer's theme automatically.";
+}
+
+async function deletePresentationFamily() {
+  const family = selectedPresentationFamily();
+  if (!family) throw new Error("Select an installed family first.");
+  if (!window.confirm(`Remove ${family.label} v${family.version}? Installed styles will remain untouched.`)) return;
+  await api(`/api/presentation-style-families/${encodeURIComponent(family.identifier)}/${encodeURIComponent(family.version)}`, {method: "DELETE"});
+  await loadPresentationStyleFamilies();
+  presentationFamilyStatus.textContent = "Family removed; all underlying registered styles remain installed.";
+}
+
+function downloadPresentationStyleBundle(url) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "presentation-styles.zip";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function downloadCurrentFamilyBundle() {
+  const family = selectedPresentationFamily();
+  if (!family) throw new Error("Choose a family first.");
+  downloadPresentationStyleBundle(`/api/presentation-style-families/${encodeURIComponent(family.identifier)}/${encodeURIComponent(family.version)}/bundle`);
+  presentationFamilyStatus.textContent = "Requested a locally generated family ZIP.";
+}
+
+function downloadCurrentStyleBundle() {
+  const style = selectedPresentationStyle();
+  if (!style) throw new Error("Select an installed style first.");
+  downloadPresentationStyleBundle(`/api/presentation-styles/${encodeURIComponent(style.kind)}/${encodeURIComponent(style.identifier)}/${encodeURIComponent(style.version)}/bundle`);
+  presentationFamilyStatus.textContent = "Requested a locally generated style ZIP.";
+}
+
+async function importPresentationBundle() {
+  const file = document.getElementById("presentationBundleFile").files?.[0];
+  if (!file || !file.name.toLowerCase().endsWith(".zip")) throw new Error("Choose a local portable ZIP file.");
+  const form = new FormData();
+  form.append("archive", file);
+  const session = presentationStyleSession;
+  const result = await api("/api/presentation-style-bundles/import", { method: "POST", body: form });
+  if (session !== presentationStyleSession) return;
+  await loadPresentationStyleCatalog();
+  await loadPresentationStyleFamilies();
+  presentationFamilyStatus.textContent = `Imported ${result.styles.length} verified style version(s) locally.${result.family ? ` Family: ${result.family.label}.` : ""}`;
+}
+
+function presentationFamilyAction(promise) {
+  Promise.resolve(promise).catch(error => { presentationFamilyStatus.textContent = error.message; });
+}
+
 async function openPresentationStyleDialog() {
   const kind = currentPresentationKind();
   if (!currentProject || !currentFile || !kind) return;
-  const session = { project: currentProject, file: currentFile, kind, outputs: [], styles: [], inspection: null };
+  const session = { project: currentProject, file: currentFile, kind, outputs: [], styles: [], families: [], inspection: null };
   presentationStyleSession = session;
   presentationStyleResult.textContent = "Loading renderer capabilities and saved presentation settings…";
   presentationStyleImportStatus.textContent = "";
   presentationStyleProfileStatus.textContent = "";
+  presentationFamilyStatus.textContent = "";
   presentationStyleCandidate.replaceChildren();
   presentationStyleCandidate.disabled = true;
   document.getElementById("presentationStyleImportBtn").disabled = true;
@@ -3761,6 +3903,7 @@ async function openPresentationStyleDialog() {
     if (presentationStyleSession !== session) return;
     session.outputs = capabilities.outputs;
     session.styles = catalog.styles;
+    loadPresentationStyleFamilies().catch(error => { presentationFamilyStatus.textContent = error.message; });
     presentationStyleRenderer.replaceChildren();
     for (const output of session.outputs) {
       const option = document.createElement("option");
@@ -3944,6 +4087,7 @@ async function importSelectedPresentationStyle() {
   const output = { beamer: "beamer:pdf", reveal: "reveal:html", powerpoint: "powerpoint:pptx" }[imported.kind];
   if (presentationStyleSession?.outputs.some(option => option.id === output)) presentationStyleRenderer.value = output;
   await loadPresentationStyleCatalog({ desiredRef: imported });
+  await loadPresentationStyleFamilies();
   presentationStyleImportStatus.textContent = `Installed ${imported.label} v${imported.version}. No original presentation content was imported.`;
   resetPresentationStyleInspection();
 }
@@ -3954,6 +4098,7 @@ async function uninstallSelectedPresentationStyle() {
   if (!window.confirm(`Uninstall ${style.label} v${style.version}? Existing profiles pinned to this version will no longer export until the style is reinstalled.`)) return;
   await api(`/api/presentation-styles/${encodeURIComponent(style.kind)}/${encodeURIComponent(style.identifier)}/${encodeURIComponent(style.version)}`, { method: "DELETE" });
   await loadPresentationStyleCatalog();
+  await loadPresentationStyleFamilies();
   presentationStyleImportStatus.textContent = `Uninstalled ${style.label} v${style.version}.`;
 }
 
@@ -5201,6 +5346,18 @@ presentationStyleImportKind?.addEventListener("change", () => {
       ? ".zip,.css,application/zip,text/css" : ".zip,.pptx,application/zip";
   resetPresentationStyleInspection();
 });
+document.getElementById("presentationFamilyUseBtn")?.addEventListener("click", () =>
+  presentationFamilyAction(Promise.resolve().then(usePresentationFamilyVariant)));
+document.getElementById("presentationFamilyCreateBtn")?.addEventListener("click", () =>
+  presentationFamilyAction(createPresentationFamily()));
+document.getElementById("presentationFamilyDeleteBtn")?.addEventListener("click", () =>
+  presentationFamilyAction(deletePresentationFamily()));
+document.getElementById("presentationFamilyExportBtn")?.addEventListener("click", () =>
+  presentationFamilyAction(Promise.resolve().then(downloadCurrentFamilyBundle)));
+document.getElementById("presentationBundleExportStyleBtn")?.addEventListener("click", () =>
+  presentationFamilyAction(Promise.resolve().then(downloadCurrentStyleBundle)));
+document.getElementById("presentationBundleImportBtn")?.addEventListener("click", () =>
+  presentationFamilyAction(importPresentationBundle()));
 presentationStyleDialog?.addEventListener("close", () => { presentationStyleSession = null; });
 document.getElementById("notebookPresentationCloseBtn")?.addEventListener("click", () =>
   closeNotebookPresentation().catch(error => setStatus(error.message)));

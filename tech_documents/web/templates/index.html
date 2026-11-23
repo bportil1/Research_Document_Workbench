@@ -431,6 +431,36 @@
         </div>
         <div id="presentationStyleImportStatus" class="notebook-export-description" aria-live="polite"></div>
       </details>
+      <details class="presentation-style-import" id="presentationFamilyManager">
+        <summary>Style families &amp; offline portable bundles</summary>
+        <p class="notebook-export-description">A family groups pinned Beamer, Reveal.js and PowerPoint styles. Branding describes the intended appearance; each renderer retains its native theme. No online services are used.</p>
+        <label class="notebook-export-field"><span>Installed family</span>
+          <select id="presentationFamilySelection"><option value="">No family selected</option></select>
+        </label>
+        <div class="presentation-style-buttons">
+          <button id="presentationFamilyUseBtn" type="button">Use variant for selected output</button>
+          <button id="presentationFamilyExportBtn" type="button">Download family ZIP</button>
+          <button id="presentationFamilyDeleteBtn" type="button">Remove family (keep styles)</button>
+        </div>
+        <p class="notebook-export-description">Create a new pinned family from installed styles:</p>
+        <label class="notebook-export-field"><span>Family identifier</span><input id="presentationFamilyId" type="text" placeholder="lab.presentation"></label>
+        <label class="notebook-export-field"><span>Family version</span><input id="presentationFamilyVersion" type="text" value="1.0.0"></label>
+        <label class="notebook-export-field"><span>Display name</span><input id="presentationFamilyLabel" type="text" placeholder="Research lab presentation"></label>
+        <label class="notebook-export-field"><span>Beamer variant</span><select id="presentationFamilyBeamer"></select></label>
+        <label class="notebook-export-field"><span>Reveal.js variant</span><select id="presentationFamilyReveal"></select></label>
+        <label class="notebook-export-field"><span>PowerPoint variant</span><select id="presentationFamilyPowerpoint"></select></label>
+        <label class="notebook-export-field"><span>Primary brand color</span><input id="presentationFamilyPrimary" type="color" value="#003f76"></label>
+        <label class="notebook-export-field"><span>Accent brand color</span><input id="presentationFamilyAccent" type="color" value="#f2b134"></label>
+        <label class="notebook-export-field"><span>Preferred body font (metadata)</span><input id="presentationFamilyFont" type="text" placeholder="Optional font name"></label>
+        <button id="presentationFamilyCreateBtn" type="button">Create versioned style family</button>
+        <p class="notebook-export-description">Import a previously exported Workbench style or family ZIP. Imported assets are verified and never executed during import.</p>
+        <label class="notebook-export-field"><span>Local portable ZIP</span><input id="presentationBundleFile" type="file" accept=".zip,application/zip"></label>
+        <div class="presentation-style-buttons">
+          <button id="presentationBundleImportBtn" type="button">Import portable ZIP</button>
+          <button id="presentationBundleExportStyleBtn" type="button">Download selected style ZIP</button>
+        </div>
+        <div id="presentationFamilyStatus" class="notebook-export-description" role="status" aria-live="polite"></div>
+      </details>
       <div id="presentationStyleResult" class="notebook-export-result" role="status" aria-live="polite"></div>
     </div>
   </dialog>

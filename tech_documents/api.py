@@ -48,6 +48,7 @@ from .presentations import (
     PresentationError, PresentationExportRequest, PresentationService, PresentationStyleRegistry, StyleReference, existing_export_renderers,
     inspect_beamer_source, import_beamer_style, inspect_asset_style_source, import_asset_style, PresentationBuildProfile,
     PresentationProfileStore, style_manifest_digest, PresentationPreviewService,
+    BrandingTokens, PresentationStyleFamilyRegistry, export_style_bundle, import_style_bundle,
 )
 from .presentations.native_beamer import is_beamer_entrypoint, discover_beamer_entrypoints
 from .paths import (
@@ -86,6 +87,7 @@ class DocumentEngine:
         self.notebooks = NotebookRuntime()
         self.notebook_exports = NotebookExportService()
         self.presentation_styles = PresentationStyleRegistry(self.base_dir / ".workbench-presentation-styles")
+        self.presentation_style_families = PresentationStyleFamilyRegistry(self.presentation_styles)
         self.presentation_profiles = PresentationProfileStore(self.base_dir / ".workbench-presentation-configs")
         self.presentation_previews = PresentationPreviewService(
             self.presentation_styles, self.base_dir / ".workbench-presentation-previews",
@@ -519,6 +521,48 @@ class DocumentEngine:
         return [style.as_dict() for style in self.presentation_styles.list_styles(
             kind=kind, renderer_id=renderer_id,
         )]
+
+    def presentation_style_family_catalog(self, *, renderer_id: str | None = None) -> list[dict[str, object]]:
+        """Return pinned multi-renderer style families (no remote lookups)."""
+        return [family.as_dict() for family in self.presentation_style_families.list_families(renderer_id=renderer_id)]
+
+    def create_presentation_style_family(
+        self, *, identifier: str, version: str, label: str,
+        variants: dict[str, StyleReference], branding: BrandingTokens | None = None,
+        overrides: dict[str, BrandingTokens] | None = None,
+        logos: dict[str, str] | None = None, description: str = "",
+    ) -> dict[str, object]:
+        return self.presentation_style_families.create(
+            identifier=identifier, version=version, label=label, description=description,
+            variants=variants, branding=branding, overrides=overrides, logos=logos,
+        ).as_dict()
+
+    def export_presentation_style_bundle(
+        self, destination: str | Path, *, style: StyleReference | None = None,
+        family_id: str | None = None, family_version: str | None = None,
+    ) -> Path:
+        """Write an offline ZIP containing a selected style or an entire family."""
+        if style is not None and family_id is None and family_version is None:
+            return export_style_bundle(self.presentation_styles, (style,), destination)
+        if style is None and family_id is not None and family_version is not None:
+            family = self.presentation_style_families.resolve(family_id, family_version)
+            return export_style_bundle(self.presentation_styles,
+                                       (variant.style for variant in family.variants), destination, family=family)
+        raise PresentationError("Select exactly one style or one versioned style family to export.")
+
+    def uninstall_presentation_style(self, reference: StyleReference) -> None:
+        """Prevent a UI removal from breaking a pinned family dependency."""
+        for family in self.presentation_style_families.list_families():
+            if any(variant.style == reference for variant in family.variants):
+                raise PresentationError(
+                    f"Style belongs to pinned family {family.identifier} v{family.version}; "
+                    "remove that family first."
+                )
+        self.presentation_styles.uninstall(reference)
+
+    def import_presentation_style_bundle(self, source: str | Path) -> dict[str, object]:
+        """Validate and register a local portable package without executing it."""
+        return import_style_bundle(self.presentation_styles, self.presentation_style_families, source)
 
     def presentation_style_preview(self, reference: StyleReference, *, generate: bool = False) -> dict[str, object]:
         """Read or explicitly build the local preview for one pinned style version."""
