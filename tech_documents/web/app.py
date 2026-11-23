@@ -444,9 +444,13 @@ def delete_presentation_profile(project: str, filename: str) -> Response:
 
 @app.post("/api/presentations/<project>/<path:filename>/exports")
 def export_presentation(project: str, filename: str) -> Response:
+    """Unified local presentation output: render, convert, or notebook document."""
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return _json_engine_error(PresentationError("Presentation export request must be a JSON object."))
+    allowed = {"renderer", "format", "output_name", "style", "use_saved_profile", "conversion_target", "document_format"}
+    if set(payload) - allowed:
+        return _json_engine_error(PresentationError("Unsupported presentation export fields."))
     try:
         style_data = payload.get("style")
         style = None
@@ -457,18 +461,25 @@ def export_presentation(project: str, filename: str) -> Response:
         use_saved_profile = payload.get("use_saved_profile", False)
         if type(use_saved_profile) is not bool:
             raise PresentationError("use_saved_profile must be a boolean.")
+        conversion_target = payload.get("conversion_target")
+        document_format = payload.get("document_format")
+        if conversion_target is not None and not isinstance(conversion_target, str):
+            raise PresentationError("Conversion target must be a string.")
+        if document_format is not None and not isinstance(document_format, str):
+            raise PresentationError("Document format must be a string.")
+        output_name = payload.get("output_name")
+        if output_name is not None and not isinstance(output_name, str):
+            raise PresentationError("Output filename must be a string.")
         result = engine.export_presentation(
-            project,
-            filename,
-            renderer_id=None if use_saved_profile and "renderer" not in payload else str(payload.get("renderer", "")),
-            output_format=None if use_saved_profile and "format" not in payload else str(payload.get("format", "")),
-            output_name=str(payload.get("output_name", "") or "") or None,
+            project, filename,
+            renderer_id=None if "renderer" not in payload else payload["renderer"],
+            output_format=None if "format" not in payload else payload["format"],
+            output_name=output_name or None,
             style=style, use_saved_profile=use_saved_profile,
+            conversion_target=conversion_target, document_format=document_format,
         )
-    except (DocumentEngineError, ValueError) as exc:
-        if isinstance(exc, DocumentEngineError):
-            return _json_engine_error(exc)
-        return _json_engine_error(DocumentEngineError(str(exc)))
+    except (DocumentEngineError, ValueError, TypeError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
     result["download_url"] = f"/api/download/{safe_name(project)}/{result['path']}"
     return jsonify(result)
 

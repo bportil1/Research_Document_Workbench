@@ -37,7 +37,6 @@ const presentationToolbar = document.getElementById("presentationToolbar");
 const presentationKindLabel = document.getElementById("presentationKindLabel");
 const presentationPresentBtn = document.getElementById("presentationPresentBtn");
 const presentationBackupBtn = document.getElementById("presentationBackupBtn");
-const presentationExportBtn = document.getElementById("presentationExportBtn");
 const toggleFormattingBtn = document.getElementById("toggleFormattingBtn");
 const formattingControls = document.getElementById("formattingControls");
 const notebookWorkspace = document.getElementById("notebookWorkspace");
@@ -55,15 +54,6 @@ const notebookReveal = document.getElementById("notebookReveal");
 const notebookRevealSlides = document.getElementById("notebookRevealSlides");
 const notebookPresentationTitle = document.getElementById("notebookPresentationTitle");
 const notebookPresentationStatus = document.getElementById("notebookPresentationStatus");
-const notebookExportDialog = document.getElementById("notebookExportDialog");
-const presentationExportTitle = document.getElementById("presentationExportTitle");
-const presentationExportSubtitle = document.getElementById("presentationExportSubtitle");
-const notebookExportPreflight = document.getElementById("notebookExportPreflight");
-const notebookExportFormat = document.getElementById("notebookExportFormat");
-const notebookExportName = document.getElementById("notebookExportName");
-const notebookExportDescription = document.getElementById("notebookExportDescription");
-const notebookExportResult = document.getElementById("notebookExportResult");
-const notebookExportRunBtn = document.getElementById("notebookExportRunBtn");
 const diagramBuilderBtn = document.getElementById("diagramBuilderBtn");
 const diagramBuilderModal = document.getElementById("diagramBuilderModal");
 const diagramBuilderSource = document.getElementById("diagramBuilderSource");
@@ -186,7 +176,6 @@ let notebookRunning = false;
 const notebookEditors = new Map();
 const notebookMarkdownEditing = new Set();
 let notebookRevealDeck = null;
-let notebookExportCapabilities = null;
 
 marked.setOptions({
   gfm: true,
@@ -2504,14 +2493,6 @@ function updatePresentationPurposeUI() {
         : "Open a notebook or Markdown presentation first";
   }
   document.getElementById("presentationStyleBtn").disabled = !(notebookReady || markdownReady);
-  if (presentationExportBtn) {
-    presentationExportBtn.disabled = !(notebookReady || markdownReady);
-    presentationExportBtn.title = notebookReady
-      ? "Export this presentation or create a named presentation backup"
-      : markdownReady
-        ? "Export or convert this Markdown presentation"
-        : "Open a notebook or Markdown presentation first";
-  }
 
   if (!notebookWorkspace.hidden) {
     renderNotebook();
@@ -3499,79 +3480,6 @@ function refreshNotebookPresentationCell(index) {
   notebookRevealDeck?.sync();
 }
 
-function renderNotebookExportPreflight(capabilities) {
-  notebookExportPreflight.innerHTML = "";
-  [
-    ["nbconvert", "Notebook exporter", "HTML / Markdown"],
-    ["reveal", "Reveal.js", "Live + offline HTML slides"],
-    ["quarto", "Quarto", "Word / PowerPoint + export orchestration"],
-    ["latex", "LaTeX", "PDF / Beamer"],
-  ].forEach(([key, label, detail]) => {
-    const row = document.createElement("div");
-    row.className = `notebook-export-capability ${capabilities[key] ? "available" : "missing"}`;
-    row.innerHTML = `<strong>${label}</strong><span>${capabilities[key] ? "Ready" : "Unavailable"}</span><small>${detail}</small>`;
-    notebookExportPreflight.appendChild(row);
-  });
-}
-
-function updateNotebookExportSelection() {
-  const transferValue = notebookExportFormat.value;
-  if (transferValue === "workbench-presentation-markdown") {
-    notebookExportDescription.textContent = "Presentation Markdown backup (.slides.md). Unlike Markdown Document export, this preserves Workbench slide boundaries and supported slide roles.";
-    notebookExportRunBtn.disabled = false;
-    return;
-  }
-  if (transferValue === "workbench-presentation-notebook") {
-    notebookExportDescription.textContent = "Static presentation notebook (.ipynb). Markdown slide boundaries become notebook cells and supported slide roles are restored.";
-    notebookExportRunBtn.disabled = false;
-    return;
-  }
-  const selected = notebookExportCapabilities?.formats?.find(item => item.id === transferValue);
-  if (!selected) {
-    notebookExportDescription.textContent = "";
-    notebookExportRunBtn.disabled = true;
-    return;
-  }
-  notebookExportDescription.textContent = selected.available
-    ? selected.description
-    : selected.reason;
-  notebookExportRunBtn.disabled = !selected.available;
-}
-
-function setPresentationExportDialogCopy(kind) {
-  if (presentationExportTitle) presentationExportTitle.textContent = "Export Presentation";
-  if (presentationExportSubtitle) {
-    presentationExportSubtitle.textContent = kind === "notebook"
-      ? "Use stored notebook outputs only. Presentation exports never execute cells."
-      : "Create a portable notebook backup from this Markdown presentation.";
-  }
-}
-
-function renderPresentationTransferResult(result, { verb = "Created" } = {}) {
-  notebookExportResult.innerHTML = "";
-  const message = document.createElement("div");
-  message.className = "presentation-export-result-main";
-  const label = document.createElement("span");
-  label.textContent = `${verb} ${result.path} `;
-  const link = document.createElement("a");
-  link.href = result.download_url;
-  link.textContent = "Download";
-  link.target = "_blank";
-  message.append(label, link);
-  notebookExportResult.appendChild(message);
-  const warnings = result.details?.warnings || [];
-  if (warnings.length) {
-    const list = document.createElement("ul");
-    list.className = "presentation-export-warnings";
-    warnings.forEach(warning => {
-      const item = document.createElement("li");
-      item.textContent = warning;
-      list.appendChild(item);
-    });
-    notebookExportResult.appendChild(list);
-  }
-}
-
 async function createPresentationBackup() {
   const kind = currentPresentationKind();
   if (!currentFile || !kind) return;
@@ -3596,104 +3504,8 @@ async function createPresentationBackup() {
   }
 }
 
-async function openPresentationTransferDialog() {
-  const kind = currentPresentationKind();
-  if (!currentFile || !kind) return;
-  setPresentationExportDialogCopy(kind);
-  if (kind === "notebook") {
-    await openNotebookExportDialog({ presentationMode: true });
-    const option = document.createElement("option");
-    option.value = "workbench-presentation-markdown";
-    option.textContent = "Presentation · Workbench Markdown (.slides.md)";
-    notebookExportFormat.appendChild(option);
-    return;
-  }
-  if (dirty) await saveCurrentFile();
-  notebookExportCapabilities = null;
-  notebookExportPreflight.innerHTML = "";
-  notebookExportFormat.innerHTML = '<option value="workbench-presentation-notebook">Presentation · Notebook (.ipynb)</option>';
-  notebookExportName.value = basename(currentFile).replace(/\.slides\.md$/i, "").replace(/\.md$/i, "");
-  notebookExportDescription.textContent = "Creates a static notebook presentation. Slide boundaries become notebook cells and supported Workbench slide roles are restored.";
-  notebookExportResult.textContent = "Named presentation conversions are written to builds/presentations/. Use Backup for the paired file beside the source.";
-  notebookExportRunBtn.disabled = false;
-  notebookExportDialog.showModal();
-}
-
-async function openNotebookExportDialog({ presentationMode = false } = {}) {
-  if (!notebookDocument || !currentFile) return;
-  if (dirty) await saveCurrentNotebook();
-  if (presentationMode) setPresentationExportDialogCopy("notebook");
-  notebookExportResult.textContent = "Checking export capabilities…";
-  notebookExportCapabilities = await api(`${notebookApiUrl()}/exports`);
-  renderNotebookExportPreflight(notebookExportCapabilities);
-  notebookExportFormat.innerHTML = "";
-  notebookExportCapabilities.formats.forEach(format => {
-    const option = document.createElement("option");
-    option.value = format.id;
-    option.disabled = !format.available;
-    const category = format.kind === "presentation" ? "Presentation" : "Document";
-    option.textContent = `${category} · ${format.label}${format.available ? "" : " — unavailable"}`;
-    notebookExportFormat.appendChild(option);
-  });
-  const preferred = notebookExportCapabilities.formats.find(item => item.id === "reveal" && item.available)
-    || notebookExportCapabilities.formats.find(item => item.kind === "presentation" && item.available)
-    || notebookExportCapabilities.formats.find(item => item.available);
-  if (preferred) notebookExportFormat.value = preferred.id;
-  notebookExportName.value = basename(currentFile).replace(/\.ipynb$/i, "");
-  notebookExportResult.textContent = "Exports are written to builds/notebooks/ and use stored outputs only. Presentation Markdown is a separate backup format and preserves slide semantics.";
-  updateNotebookExportSelection();
-  notebookExportDialog.showModal();
-}
-
-async function runNotebookExport() {
-  const transferValue = notebookExportFormat.value;
-  if (transferValue === "workbench-presentation-markdown" || transferValue === "workbench-presentation-notebook") {
-    notebookExportRunBtn.disabled = true;
-    const target = transferValue.endsWith("markdown") ? "markdown" : "notebook";
-    notebookExportResult.textContent = `Creating ${target} presentation backup…`;
-    try {
-      const result = await api(`/api/presentations/${encodeURIComponent(currentProject)}/${currentFile.split("/").map(encodeURIComponent).join("/")}/convert`, {
-        method: "POST",
-        body: JSON.stringify({ target, output_name: notebookExportName.value.trim(), location: "build" }),
-      });
-      renderPresentationTransferResult(result);
-      await loadProjects(currentProject, currentFile);
-      const warningCount = result.details?.warnings?.length || 0;
-      setStatus(`Created presentation export ${result.path}${warningCount ? ` · ${warningCount} warning(s)` : ""}`);
-    } finally {
-      notebookExportRunBtn.disabled = false;
-    }
-    return;
-  }
-  const selected = notebookExportCapabilities?.formats?.find(item => item.id === notebookExportFormat.value);
-  if (!selected?.available) return;
-  notebookExportRunBtn.disabled = true;
-  notebookExportResult.textContent = `Exporting ${selected.label}…`;
-  try {
-    const result = await api(`${notebookApiUrl()}/exports`, {
-      method: "POST",
-      body: JSON.stringify({
-        format: selected.id,
-        output_name: notebookExportName.value.trim(),
-      }),
-    });
-    notebookExportResult.innerHTML = "";
-    const message = document.createElement("span");
-    message.textContent = `Created ${result.path} `;
-    const link = document.createElement("a");
-    link.href = result.download_url;
-    link.textContent = "Download";
-    link.target = "_blank";
-    notebookExportResult.append(message, link);
-    await loadProjects(currentProject, currentFile);
-    setStatus(`Exported ${result.path}`);
-  } finally {
-    notebookExportRunBtn.disabled = false;
-  }
-}
-
-// PS-07: reusable style selection and rendering. These controls call the shared
-// presentation API, not the legacy notebook-only export pipeline.
+// PS-08: renderer/style selection, slide conversion and notebook document exports
+// share a single presentation dialog and the source-aware /exports catalog.
 const presentationStyleDialog = document.getElementById("presentationStyleDialog");
 const presentationStyleRenderer = document.getElementById("presentationStyleRenderer");
 const presentationStyleSelection = document.getElementById("presentationStyleSelection");
@@ -3723,9 +3535,7 @@ function selectedPresentationStyleRef() {
 }
 
 function chosenPresentationTarget() {
-  const [renderer, format] = presentationStyleRenderer.value.split(":");
-  const cap = presentationStyleSession?.renderers.find(item => item.id === renderer);
-  return cap && cap.output_formats.includes(format) ? { renderer, format, cap } : null;
+  return presentationStyleSession?.outputs.find(item => item.id === presentationStyleRenderer.value) || null;
 }
 
 function refreshPresentationStyleSelection(desiredRef = null) {
@@ -3737,33 +3547,42 @@ function refreshPresentationStyleSelection(desiredRef = null) {
   none.value = "";
   none.textContent = "Default (no installed style)";
   presentationStyleSelection.appendChild(none);
-  for (let i = 0; i < session.styles.length; i++) {
-    const style = session.styles[i];
-    if (!choice || !style.renderer_ids.includes(choice.renderer) || !choice.cap.style_kinds.includes(style.kind)) continue;
-    const option = document.createElement("option");
-    option.value = String(i);
-    option.textContent = `${style.label} — ${style.identifier} v${style.version}`;
-    presentationStyleSelection.appendChild(option);
-    if (desiredRef && desiredRef.identifier === style.identifier && desiredRef.version === style.version && desiredRef.kind === style.kind) {
-      presentationStyleSelection.value = String(i);
+  if (choice?.kind === "render") {
+    for (let i = 0; i < session.styles.length; i++) {
+      const style = session.styles[i];
+      if (!style.renderer_ids.includes(choice.renderer) || !choice.style_kinds.includes(style.kind)) continue;
+      const option = document.createElement("option");
+      option.value = String(i);
+      option.textContent = `${style.label} — ${style.identifier} v${style.version}`;
+      presentationStyleSelection.appendChild(option);
+      if (desiredRef && desiredRef.identifier === style.identifier && desiredRef.version === style.version && desiredRef.kind === style.kind) {
+        presentationStyleSelection.value = String(i);
+      }
     }
   }
+  const styleEnabled = choice?.kind === "render" && choice.style_kinds.length > 0;
+  document.getElementById("presentationStylePickerField").hidden = !styleEnabled;
+  presentationStyleSelection.disabled = !styleEnabled;
   updatePresentationStyleDetails();
 }
 
 function updatePresentationStyleDetails() {
   const choice = chosenPresentationTarget();
-  const style = selectedPresentationStyle();
-  const supported = Boolean(choice?.cap.available);
+  const style = choice?.kind === "render" ? selectedPresentationStyle() : null;
+  const supported = Boolean(choice?.available);
   const description = style
     ? `${style.label} · ${style.kind} · version ${style.version} · ${style.assets.length} registered assets`
-    : "Default renderer style; no custom theme is applied.";
+    : choice?.description || "Select an output format.";
   presentationStyleDescription.textContent = choice
-    ? `${description} ${supported ? "" : `Renderer unavailable: ${choice.cap.reason}`}`
-    : "No renderer supports this presentation source.";
+    ? `${description}${supported ? "" : ` Renderer unavailable: ${choice.reason}`}`
+    : "No output formats were discovered for this source.";
+  const renderMode = choice?.kind === "render";
   document.getElementById("presentationStyleExportBtn").disabled = !supported;
-  document.getElementById("presentationStyleSaveBtn").disabled = !choice;
+  document.getElementById("presentationStyleSaveBtn").disabled = !renderMode;
   document.getElementById("presentationStyleRemoveBtn").disabled = !style;
+  document.getElementById("presentationStyleOutputHint").textContent = renderMode
+    ? "Renderer settings can be saved as a version-pinned profile. Sources are not rewritten."
+    : "Conversions and notebook document exports do not use styles or alter saved renderer profiles.";
 }
 
 async function loadPresentationStyleCatalog({ desiredRef = null } = {}) {
@@ -3771,14 +3590,13 @@ async function loadPresentationStyleCatalog({ desiredRef = null } = {}) {
   const response = await api("/api/presentation-styles");
   if (presentationStyleSession !== session) return;
   session.styles = response.styles;
-  session.renderers = response.renderers;
   refreshPresentationStyleSelection(desiredRef);
 }
 
 async function openPresentationStyleDialog() {
   const kind = currentPresentationKind();
   if (!currentProject || !currentFile || !kind) return;
-  const session = { project: currentProject, file: currentFile, kind, renderers: [], styles: [], inspection: null };
+  const session = { project: currentProject, file: currentFile, kind, outputs: [], styles: [], inspection: null };
   presentationStyleSession = session;
   presentationStyleResult.textContent = "Loading renderer capabilities and saved presentation settings…";
   presentationStyleImportStatus.textContent = "";
@@ -3795,20 +3613,19 @@ async function openPresentationStyleDialog() {
       api(presentationStyleUrl(session, "/exports")),
     ]);
     if (presentationStyleSession !== session) return;
-    session.renderers = catalog.renderers.filter(entry => capabilities.renderers.some(item => item.id === entry.id));
+    session.outputs = capabilities.outputs;
     session.styles = catalog.styles;
     presentationStyleRenderer.replaceChildren();
-    for (const cap of session.renderers) {
-      for (const format of cap.output_formats) {
-        const option = document.createElement("option");
-        option.value = `${cap.id}:${format}`;
-        option.textContent = `${cap.label} — ${format.toUpperCase()}${cap.available ? "" : " (tool unavailable)"}`;
-        // Saving an unavailable target's settings is permitted; exporting it is not.
-        presentationStyleRenderer.appendChild(option);
-      }
+    for (const output of session.outputs) {
+      const option = document.createElement("option");
+      option.value = output.id;
+      option.textContent = `${output.label}${output.available ? "" : " (tool unavailable)"}`;
+      presentationStyleRenderer.appendChild(option);
     }
-    const preferred = session.renderers.find(item => item.available) || session.renderers[0];
-    if (preferred) presentationStyleRenderer.value = `${preferred.id}:${preferred.output_formats[0]}`;
+    const preferred = session.outputs.find(item => item.kind === "render" && item.available)
+      || session.outputs.find(item => item.available)
+      || session.outputs[0];
+    if (preferred) presentationStyleRenderer.value = preferred.id;
     let profile = null;
     try {
       const response = await api(presentationStyleUrl(session, "/profile"));
@@ -3818,28 +3635,31 @@ async function openPresentationStyleDialog() {
     }
     if (profile) {
       const key = `${profile.renderer_id}:${profile.output_format}`;
-      if ([...presentationStyleRenderer.options].some(option => option.value === key)) {
-        presentationStyleRenderer.value = key;
-      }
+      if (session.outputs.some(item => item.id === key)) presentationStyleRenderer.value = key;
       if (profile.output_name) presentationStyleOutput.value = profile.output_name;
       presentationStyleProfileStatus.textContent = `Saved profile: ${profile.renderer_id}/${profile.output_format}${profile.style ? ` · ${profile.style.identifier}@${profile.style.version}` : ""}`;
     } else if (!presentationStyleProfileStatus.textContent) {
       presentationStyleProfileStatus.textContent = "No saved profile. Save to reuse these settings for this file.";
     }
     refreshPresentationStyleSelection(profile?.style);
-    presentationStyleResult.textContent = "Select a renderer and style, save the profile, or export immediately. Rendering is local.";
+    presentationStyleResult.textContent = "Select an output, choose a compatible theme for rendered decks, or export directly. All processing is local.";
   } catch (error) {
     if (presentationStyleSession === session) presentationStyleResult.textContent = `Unable to load presentation settings: ${error.message}`;
   }
 }
 
-function presentationStyleRequestBody() {
+function presentationStyleRequestBody({ allowUnavailable = false } = {}) {
   const choice = chosenPresentationTarget();
-  if (!choice) throw new Error("Choose a supported renderer and output format.");
+  if (!choice) throw new Error("Choose an output format.");
+  if (!allowUnavailable && !choice.available) throw new Error(choice.reason || "The selected local tool is unavailable.");
+  const output_name = presentationStyleOutput.value.trim() || null;
+  if (choice.kind === "conversion") return { conversion_target: choice.id.split(":")[1], output_name };
+  if (choice.kind === "document") return { document_format: choice.format, output_name };
+  if (choice.kind !== "render") throw new Error("Unknown presentation output type.");
   return {
     renderer: choice.renderer,
     format: choice.format,
-    output_name: presentationStyleOutput.value.trim() || null,
+    output_name,
     style: selectedPresentationStyleRef(),
   };
 }
@@ -3850,8 +3670,9 @@ async function saveCurrentPresentationStyleProfile() {
   const button = document.getElementById("presentationStyleSaveBtn");
   button.disabled = true;
   try {
+    if (chosenPresentationTarget()?.kind !== "render") throw new Error("Only rendered presentations can save style profiles.");
     const result = await api(presentationStyleUrl(session, "/profile"), {
-      method: "PUT", body: JSON.stringify({ ...presentationStyleRequestBody(), options: {} }),
+      method: "PUT", body: JSON.stringify({ ...presentationStyleRequestBody({ allowUnavailable: true }), options: {} }),
     });
     presentationStyleProfileStatus.textContent = `Saved for ${session.file}: ${result.profile.renderer_id}/${result.profile.output_format}${result.profile.style ? ` · ${result.profile.style.identifier}@${result.profile.style.version}` : ""}`;
     presentationStyleResult.textContent = "Profile saved locally and pinned to this presentation.";
@@ -3865,6 +3686,32 @@ async function clearCurrentPresentationStyleProfile() {
   if (!session) return;
   const result = await api(presentationStyleUrl(session, "/profile"), { method: "DELETE" });
   presentationStyleProfileStatus.textContent = result.deleted ? "Saved profile cleared for this presentation." : "No saved profile for this presentation.";
+}
+
+function showPresentationExportResult(result) {
+  presentationStyleResult.replaceChildren();
+  const summary = document.createElement("div");
+  summary.className = "presentation-export-result-main";
+  const label = document.createElement("span");
+  label.textContent = `Created ${result.path}${Number.isFinite(result.size) ? ` (${Math.round(result.size / 1024)} KiB)` : ""} `;
+  const link = document.createElement("a");
+  link.href = result.download_url;
+  link.textContent = "Download";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  summary.append(label, link);
+  presentationStyleResult.appendChild(summary);
+  const warnings = result.details?.warnings || [];
+  if (warnings.length) {
+    const list = document.createElement("ul");
+    list.className = "presentation-export-warnings";
+    warnings.forEach(warning => {
+      const item = document.createElement("li");
+      item.textContent = String(warning);
+      list.appendChild(item);
+    });
+    presentationStyleResult.appendChild(list);
+  }
 }
 
 async function exportSelectedPresentationStyle() {
@@ -3882,15 +3729,7 @@ async function exportSelectedPresentationStyle() {
     const result = await api(presentationStyleUrl(session, "/exports"), {
       method: "POST", body: JSON.stringify(presentationStyleRequestBody()),
     });
-    presentationStyleResult.replaceChildren();
-    const span = document.createElement("span");
-    span.textContent = `Created ${result.path} `;
-    const link = document.createElement("a");
-    link.href = result.download_url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "Download";
-    presentationStyleResult.append(span, link);
+    showPresentationExportResult(result);
     setStatus(`Presentation exported: ${result.path}`);
     if (currentProject === session.project && currentFile === session.file) await loadProjects(session.project, session.file);
   } finally {
@@ -3956,7 +3795,7 @@ async function importSelectedPresentationStyle() {
   if (presentationStyleSession !== session) return;
   const imported = response.style;
   // Importing a Beamer style makes Beamer the expected renderer, if available.
-  if ([...presentationStyleRenderer.options].some(option => option.value === "beamer:pdf")) presentationStyleRenderer.value = "beamer:pdf";
+  if (presentationStyleSession?.outputs.some(option => option.id === "beamer:pdf")) presentationStyleRenderer.value = "beamer:pdf";
   await loadPresentationStyleCatalog({ desiredRef: imported });
   presentationStyleImportStatus.textContent = `Installed ${imported.label} v${imported.version}. No original presentation content was imported.`;
   resetPresentationStyleInspection();
@@ -5192,19 +5031,11 @@ document.getElementById("presentationStyleRemoveBtn")?.addEventListener("click",
 presentationStyleZip?.addEventListener("change", resetPresentationStyleInspection);
 presentationStylePath?.addEventListener("input", resetPresentationStyleInspection);
 presentationStyleDialog?.addEventListener("close", () => { presentationStyleSession = null; });
-presentationExportBtn?.addEventListener("click", () =>
-  openPresentationTransferDialog().catch(error => setStatus(`Export setup failed: ${error.message}`)));
 document.getElementById("notebookPresentationCloseBtn")?.addEventListener("click", () =>
   closeNotebookPresentation().catch(error => setStatus(error.message)));
 document.getElementById("notebookPresentationPrevBtn")?.addEventListener("click", () => notebookRevealDeck?.prev());
 document.getElementById("notebookPresentationNextBtn")?.addEventListener("click", () => notebookRevealDeck?.next());
 document.getElementById("notebookPresentationOverviewBtn")?.addEventListener("click", () => notebookRevealDeck?.toggleOverview());
-notebookExportFormat?.addEventListener("change", updateNotebookExportSelection);
-notebookExportRunBtn?.addEventListener("click", () =>
-  runNotebookExport().catch(error => {
-    notebookExportResult.textContent = `Export failed: ${error.message}`;
-    setStatus(`Export failed: ${error.message}`);
-  }));
 
 fileContextMenu.querySelectorAll("[data-file-action]").forEach(button => {
   button.addEventListener("click", () => {

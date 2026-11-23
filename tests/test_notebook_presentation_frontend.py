@@ -14,10 +14,10 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
     def test_live_presentation_and_export_controls_are_present(self):
         html = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn('id="presentationPresentBtn"', html)
-        self.assertIn('id="presentationExportBtn"', html)
+        self.assertIn('id="presentationStyleBtn"', html)
         self.assertIn('id="notebookPresentation"', html)
         self.assertIn('id="notebookRevealSlides"', html)
-        self.assertIn('id="notebookExportDialog"', html)
+        self.assertIn('id="presentationStyleDialog"', html)
         self.assertIn('/static/vendor/reveal/dist/reveal.js', html)
 
     def test_markdown_cells_default_to_slides_and_metadata_overrides_remain_supported(self):
@@ -117,31 +117,30 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
         self.assertIn('role === "notes"', javascript)
 
 
-    def test_presentation_cross_transfer_uses_existing_export_surface(self):
+    def test_presentation_cross_transfer_uses_unified_export_surface(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
-        self.assertIn('function openPresentationTransferDialog()', javascript)
-        self.assertIn('workbench-presentation-markdown', javascript)
-        self.assertIn('workbench-presentation-notebook', javascript)
-        self.assertIn('/api/presentations/', javascript)
-        self.assertIn('builds/presentations/', javascript)
-        self.assertIn('presentationExportBtn.disabled = !(notebookReady || markdownReady);', javascript)
+        self.assertIn('function presentationStyleRequestBody(', javascript)
+        self.assertIn('conversion_target:', javascript)
+        self.assertIn('document_format:', javascript)
+        self.assertIn('presentationStyleUrl(session, "/exports")', javascript)
+        self.assertIn('function showPresentationExportResult(result)', javascript)
+        self.assertNotIn('function openPresentationTransferDialog()', javascript)
+        self.assertNotIn('presentationExportBtn', javascript)
 
     def test_presentation_backup_and_export_workflow_is_explicit_and_paired(self):
         html = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn('id="presentationBackupBtn"', html)
-        self.assertIn('id="presentationExportTitle"', html)
-        self.assertIn('id="presentationExportSubtitle"', html)
+        self.assertIn('id="presentationStyleDialog"', html)
+        self.assertIn('id="presentationStyleRenderer"', html)
+        self.assertNotIn('id="notebookExportDialog"', html)
 
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
         self.assertIn('function createPresentationBackup()', javascript)
         self.assertIn('location: "adjacent"', javascript)
-        self.assertIn('location: "build"', javascript)
-        self.assertIn('function renderPresentationTransferResult(result', javascript)
         self.assertIn('presentation-export-warnings', javascript)
-        self.assertIn('openPresentationTransferDialog().catch', javascript)
-        self.assertIn('Presentation · Workbench Markdown (.slides.md)', javascript)
-        self.assertIn('Presentation · Notebook (.ipynb)', javascript)
-
+        self.assertIn('function showPresentationExportResult(result)', javascript)
+        self.assertIn('function openPresentationStyleDialog()', javascript)
+        self.assertIn('function exportSelectedPresentationStyle()', javascript)
 
     def test_markdown_backup_roles_feed_the_same_live_presentation_model(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
@@ -160,13 +159,14 @@ class NotebookPresentationFrontendContractTests(unittest.TestCase):
 
     def test_export_ui_is_preflighted_and_non_executing(self):
         javascript = JAVASCRIPT.read_text(encoding="utf-8")
-        self.assertIn('Checking export capabilities', javascript)
-        self.assertIn('/exports', javascript)
-        self.assertIn('use stored outputs only', javascript)
-        self.assertIn('format: selected.id', javascript)
+        self.assertIn('Loading renderer capabilities and saved presentation settings', javascript)
+        self.assertIn('capabilities.outputs', javascript)
+        self.assertIn('api(presentationStyleUrl(session, "/exports"))', javascript)
+        self.assertIn('function presentationStyleRequestBody(', javascript)
+        self.assertIn('function showPresentationExportResult(result)', javascript)
         css = STYLES.read_text(encoding="utf-8")
         self.assertIn('.notebook-presentation', css)
-        self.assertIn('.notebook-export-preflight', css)
+        self.assertIn('.presentation-style-dialog', css)
 
 
 if __name__ == "__main__":

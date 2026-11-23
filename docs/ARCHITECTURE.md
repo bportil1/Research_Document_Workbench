@@ -313,3 +313,33 @@ requires an explicit theme candidate and version when installing; uninstall is
 version-specific and warns about already-pinned profiles. Installed assets are
 copied into the PS-03 registry. No external theme catalog or network compiler
 is used. This UI does not provide a rendered theme gallery (reserved for PS-09).
+
+### PS-08: Unified presentation output catalog and workflow
+
+The Presentations wing exposes one **Style & export…** dialog for Markdown and
+notebook sources. Its format picker is populated from
+`DocumentEngine.presentation_export_capabilities(project, filename)["outputs"]`,
+which reports **source-specific** availability and groups outputs by operation:
+
+- `render`: Beamer PDF, Reveal.js HTML, and PowerPoint PPTX through the existing
+  shared `PresentationService`, with compatible style selection and saved profiles.
+- `conversion`: `.slides.md` ↔ `.ipynb` presentation transfers with slide roles
+  and static notebook outputs preserved where supported. Conversions do not
+  select or modify themes or renderer profiles.
+- `document`: for notebook sources only, legacy notebook document exports
+  (HTML, Markdown, Word, ordinary PDF). These remain distinct from styled decks.
+
+All three operations use `POST /api/presentations/<project>/<filename>/exports`
+with **exactly one** of `{renderer, format}`, `conversion_target`, or
+`document_format`; only renderer exports may use a style or saved profile.
+Response metadata includes `export_kind`, relative `path`, `format`, and
+`download_url` at the HTTP layer. Conversions also return slide-role warnings in
+`details.warnings`, shown by the unified dialog. Named conversions write into
+`builds/presentations/` and cannot follow symlinked output paths outside the
+project. Notebook document exports remain in `builds/notebooks/`.
+
+`Backup` remains a separate explicit action for an *adjacent*, non-overwriting
+presentation-source backup. Pre-existing `/convert` and `/api/notebooks/.../exports`
+HTTP routes are retained for older clients; they no longer require a separate
+presentation export dialog. The renderer-specific style import and profile APIs
+from PS-07 are unchanged. PS-09 will add rendered theme previews.

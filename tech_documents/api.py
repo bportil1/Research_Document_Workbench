@@ -543,14 +543,64 @@ class DocumentEngine:
         raise UnsupportedFileTypeError("Presentation export requires Markdown or a .ipynb notebook.")
 
     def presentation_export_capabilities(self, project: str, filename: str) -> dict[str, Any]:
-        """Source-specific renderer discovery for future shared presentation UIs."""
+        """One source-aware catalog for rendered, converted and notebook outputs.
+
+        The older ``renderers`` key remains for existing API consumers. UI clients
+        should use ``outputs`` because tool availability is source-specific.
+        """
         _, source_kind = self._presentation_source(project, filename)
-        return {
-            "source_kind": source_kind,
-            "renderers": self.presentations.compatible_renderers(
-                source_kind=source_kind, available_only=False,
-            ),
-        }
+        renderers = self.presentations.compatible_renderers(
+            source_kind=source_kind, available_only=False,
+        )
+        notebook_caps = self.notebook_exports.capabilities()
+        format_caps = {entry["id"]: entry for entry in notebook_caps["formats"]}
+        targets = (("beamer", "pdf", "beamer"),
+                   ("reveal", "html", "reveal"),
+                   ("powerpoint", "pptx", "pptx"))
+        outputs: list[dict[str, Any]] = []
+        # A renderer may support notebooks but not Markdown on this installation;
+        # do not conflate overall adapter availability with source availability.
+        for renderer_id, output_format, notebook_format in targets:
+            renderer = next((item for item in self.presentations.capabilities()
+                             if item["id"] == renderer_id), None)
+            if renderer is None:
+                continue
+            if source_kind == "notebook":
+                format_cap = format_caps[notebook_format]
+                ready = bool(format_cap["available"])
+                reason = str(format_cap["reason"] or "")
+            else:
+                ready = bool(notebook_caps["quarto"]) and (renderer_id != "beamer" or bool(notebook_caps["latex"]))
+                reason = ("Install Quarto to export Markdown presentations." if not notebook_caps["quarto"] else
+                          "Install a local TeX/LaTeX engine for Beamer exports." if not ready else "")
+            outputs.append({
+                "id": f"{renderer_id}:{output_format}", "kind": "render",
+                "renderer": renderer_id, "format": output_format,
+                "label": f"{renderer['label']} — {output_format.upper()}",
+                "available": ready, "reason": reason,
+                "style_kinds": renderer["style_kinds"],
+                "description": "Render using the selected local presentation renderer and optional registered style.",
+            })
+        conversion = ("markdown", "Presentation Markdown (.slides.md)") if source_kind == "notebook" else (
+            "notebook", "Presentation notebook (.ipynb)")
+        outputs.append({
+            "id": f"conversion:{conversion[0]}", "kind": "conversion",
+            "format": "slides_md" if conversion[0] == "markdown" else "ipynb",
+            "label": f"Convert — {conversion[1]}", "available": True,
+            "reason": "", "style_kinds": [],
+            "description": "Convert the source and preserve supported slide roles. This is not a theme-rendered export.",
+        })
+        if source_kind == "notebook":
+            for entry in notebook_caps["formats"]:
+                if entry["kind"] != "document":
+                    continue
+                outputs.append({
+                    "id": f"document:{entry['id']}", "kind": "document",
+                    "format": entry["id"], "label": f"Notebook document — {entry['label']}",
+                    "available": bool(entry["available"]), "reason": entry["reason"],
+                    "style_kinds": [], "description": entry["description"],
+                })
+        return {"source_kind": source_kind, "renderers": renderers, "outputs": outputs}
 
     def _validate_presentation_profile(
         self, profile: PresentationBuildProfile, *, source_kind: str,
@@ -616,14 +666,45 @@ class DocumentEngine:
         output_name: str | None = None,
         style: StyleReference | None = None,
         use_saved_profile: bool = False,
+        conversion_target: str | None = None,
+        document_format: str | None = None,
     ) -> dict[str, Any]:
-        """Export with explicit choices or deliberately opt into a saved profile.
+        """Export through one entry point, including conversions and documents.
 
-        Existing explicit exports never inherit configuration from another
-        presentation. Saved profiles are loaded and revalidated per invocation.
+        Explicit conversion/document exports cannot select themes or saved profiles.
+        Rendered exports preserve the existing pinned-style behavior.
+        Existing explicit exports never inherit another source's configuration.
         """
         source, source_kind = self._presentation_source(project, filename)
         root = self.project_path(project).resolve()
+        if conversion_target is not None or document_format is not None:
+            if conversion_target is not None and document_format is not None:
+                raise PresentationError("Choose only one presentation export operation.")
+            if renderer_id is not None or output_format is not None or style is not None or use_saved_profile:
+                raise PresentationError("Conversion and document exports cannot mix renderer, style, or saved profile options.")
+            if conversion_target is not None:
+                expected = "markdown" if source_kind == "notebook" else "notebook"
+                if conversion_target != expected:
+                    raise PresentationError("Conversion target is incompatible with this presentation source.")
+                converted = self.convert_presentation(
+                    project, filename, target=conversion_target, output_name=output_name, location="build",
+                )
+                return {
+                    **converted, "export_kind": "conversion", "renderer": "conversion",
+                    "format": "slides_md" if conversion_target == "markdown" else "ipynb",
+                    "source_kind": source_kind, "engine": "workbench-transfer",
+                }
+            if source_kind != "notebook":
+                raise PresentationError("Notebook document exports require a .ipynb source.")
+            doc_cap = next((cap for cap in self.notebook_exports.capabilities()["formats"]
+                            if cap["id"] == document_format and cap["kind"] == "document"), None)
+            if doc_cap is None:
+                raise PresentationError("Unsupported notebook document export format.")
+            exported = self.export_notebook(project, filename, format_id=document_format, output_name=output_name)
+            return {
+                **exported, "export_kind": "document", "renderer": "notebook-document",
+                "source_kind": source_kind,
+            }
         if use_saved_profile:
             if renderer_id is not None or output_format is not None or style is not None:
                 raise PresentationError("A saved presentation profile cannot be mixed with explicit renderer or style choices.")
@@ -649,6 +730,7 @@ class DocumentEngine:
         output_path = result.output_path.resolve()
         response = {
             "ok": True,
+            "export_kind": "render",
             "renderer": result.renderer_id,
             "format": result.output_format,
             "source_kind": source_kind,
@@ -726,6 +808,10 @@ class DocumentEngine:
         if location not in {"build", "adjacent"}:
             raise DocumentEngineError("Presentation conversion location must be 'build' or 'adjacent'.")
         output_dir = source.parent if location == "adjacent" else project_root / "builds" / "presentations"
+        if location == "build" and (project_root / "builds").is_symlink():
+            raise InvalidPathError("Presentation build root cannot be a symlink.")
+        if output_dir.is_symlink() or not output_dir.resolve().is_relative_to(project_root):
+            raise InvalidPathError("Presentation output directory must remain inside its project.")
         output_dir.mkdir(parents=True, exist_ok=True)
 
         source_base = source.name[:-10] if source.name.lower().endswith(".slides.md") else source.stem
@@ -736,13 +822,15 @@ class DocumentEngine:
             destination = output_dir / f"{safe}.slides.md"
             convert = notebook_to_presentation_markdown
         elif target == "notebook":
-            if source.suffix.lower() != ".md":
+            if source.suffix.lower() not in {".md", ".markdown"}:
                 raise UnsupportedFileTypeError("Notebook presentation conversion requires a Markdown source.")
             destination = output_dir / f"{safe}.ipynb"
             convert = presentation_markdown_to_notebook
         else:
             raise DocumentEngineError("Presentation target must be 'markdown' or 'notebook'.")
 
+        if destination.is_symlink() or not destination.resolve().is_relative_to(project_root):
+            raise InvalidPathError("Presentation conversion output must stay in the project and cannot be a symlink.")
         if destination.resolve() == source.resolve():
             raise ItemConflictError("Presentation conversion cannot overwrite its source file.")
         if location == "adjacent" and destination.exists():

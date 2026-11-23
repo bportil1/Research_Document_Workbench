@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PresentationStyleUiContractTests(unittest.TestCase):
-    def test_styling_controls_keep_existing_export_fallback(self):
+    def test_styling_controls_use_unified_export_interface(self):
         template = (ROOT / "tech_documents/web/templates/index.html").read_text(encoding="utf-8")
         js = (ROOT / "tech_documents/web/static/app.js").read_text(encoding="utf-8")
         css = (ROOT / "tech_documents/web/static/styles.css").read_text(encoding="utf-8")
@@ -26,8 +26,13 @@ class PresentationStyleUiContractTests(unittest.TestCase):
             "presentationStyleRemoveBtn", "presentationStyleImportStatus",
         ):
             self.assertIn(f'id="{control}"', template)
-        self.assertIn('id="presentationExportBtn"', template)
-        self.assertIn('id="notebookExportDialog"', template)
+        self.assertNotIn('id="presentationExportBtn"', template)
+        self.assertNotIn('id="notebookExportDialog"', template)
+        self.assertIn('id="presentationStylePickerField"', template)
+        self.assertIn('id="presentationStyleOutputHint"', template)
+        self.assertIn('function showPresentationExportResult(', js)
+        self.assertIn('conversion_target', js)
+        self.assertIn('document_format', js)
         self.assertIn('class="presentation-style-import"', template)
         self.assertIn('function refreshPresentationStyleSelection(', js)
         self.assertIn('function openPresentationStyleDialog(', js)

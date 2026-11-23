@@ -2038,9 +2038,10 @@ body {
   }
 }
 
-/* PS-07: style/export UI uses the same Workbench dialog controls as notebook exports. */
+/* PS-08: one presentation dialog for styled, converted and notebook-document outputs. */
 .presentation-style-dialog { width: min(790px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto; }
 .presentation-style-source { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.presentation-style-dialog .notebook-export-field[hidden] { display: none !important; }
 .presentation-style-buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .presentation-style-import { border-top: 1px solid #c8d7e4; padding-top: 12px; }
 .presentation-style-import summary { cursor: pointer; font-weight: 600; margin-bottom: 10px; }
