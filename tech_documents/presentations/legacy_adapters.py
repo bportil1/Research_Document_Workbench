@@ -6,6 +6,7 @@ format-specific bindings for the shared presentation service, not theme manageme
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import tempfile
@@ -87,7 +88,7 @@ class ExistingExportRenderer:
             label=label,
             source_kinds=supported or (("markdown", "notebook", "latex") if self.renderer_id == "beamer" else ("markdown", "notebook")),
             output_formats=(output,),
-            style_kinds=("beamer",) if self.renderer_id == "beamer" and self.styles is not None else (),
+            style_kinds=(self.renderer_id,) if self.styles is not None else (),
             available=bool(supported),
             reason="" if supported else " ".join(reasons),
         )
@@ -103,9 +104,11 @@ class ExistingExportRenderer:
                 raise PresentationError("Native Beamer projects use their own theme; an installed style cannot be overlaid.")
             return self._render_native_beamer(request)
         if request.style is not None:
-            if self.renderer_id != "beamer" or self.styles is None:
+            if self.styles is None:
                 raise PresentationError("This presentation renderer cannot apply registered styles.")
-            return self._render_styled_beamer(request)
+            if self.renderer_id == "beamer":
+                return self._render_styled_beamer(request)
+            return self._render_styled_asset_style(request)
         if request.source_kind == "notebook":
             # Reuse the existing implementation, never execute notebook cells.
             export_dir = request.project_root / "builds" / "notebooks"
@@ -201,6 +204,86 @@ class ExistingExportRenderer:
         finally:
             temporary.unlink(missing_ok=True)
         return PresentationExportResult(self.renderer_id, "pdf", destination)
+
+    def _render_styled_asset_style(self, request: PresentationExportRequest) -> PresentationExportResult:
+        """Render a pinned CSS or PPTX reference style via local Quarto.
+
+        Quarto receives its renderer-specific configuration via a temporary
+        metadata YAML file (JSON is a YAML subset). Sources and assets remain
+        immutable; builds are staged and atomically promoted on success.
+        """
+        assert request.style is not None and self.styles is not None
+        if self.renderer_id not in {"reveal", "powerpoint"} or request.style.kind != self.renderer_id:
+            raise PresentationError("Selected presentation style does not match its renderer.")
+        if request.source_kind not in {"markdown", "notebook"}:
+            raise PresentationError("CSS and PowerPoint styles require Markdown or notebook source.")
+        quarto = self.notebooks._quarto()
+        if not quarto:
+            raise PresentationError("Install local Quarto for styled presentation exports.")
+        installed = self.styles.resolve(request.style, renderer_id=self.renderer_id)
+        entry = installed.manifest.entrypoint
+        if not entry or Path(entry).suffix.lower() != (".css" if self.renderer_id == "reveal" else ".pptx"):
+            raise PresentationError("Installed style requires a CSS or PPTX reference entrypoint.")
+        folder = "notebooks" if request.source_kind == "notebook" else "presentations"
+        export_dir = request.project_root / "builds" / folder
+        self._check_export_directory(request.project_root, export_dir)
+        stem = request.source_path.stem
+        if request.source_kind == "markdown" and request.source_path.name.lower().endswith(".slides.md"):
+            stem = request.source_path.name[:-10]
+        stem = self.notebooks._safe_stem(request.output_name or stem)
+        extension = ".html" if self.renderer_id == "reveal" else ".pptx"
+        if stem.lower().endswith(extension):
+            stem = stem[:-len(extension)]
+        destination = export_dir / f"{stem}{extension}"
+        if destination.is_symlink() or not destination.resolve().is_relative_to(request.project_root.resolve()):
+            raise PresentationError("Styled presentation output must remain inside the project.")
+        export_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".styled-presentation-", dir=export_dir) as directory:
+            staged = Path(directory)
+            assets = staged / "theme"
+            assets.mkdir()
+            for record in installed.manifest.assets:
+                source = installed.asset(record.path)
+                target = assets / record.path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+            style_entry = assets / entry
+            # Quarto's revealjs 'css' option includes CSS without assuming it
+            # is a Sass theme. PPTX 'reference-doc' uses a real .pptx package.
+            if self.renderer_id == "reveal":
+                # A staged HTML export must remain functional after the
+                # temporary build directory is removed. Instruct Quarto to
+                # embed its CSS, Reveal libraries, and other resources.
+                renderer_options = {"css": str(style_entry), "embed-resources": True}
+            else:
+                renderer_options = {"reference-doc": str(style_entry)}
+            metadata = staged / "style.yml"
+            metadata.write_text(json.dumps({"format": {
+                "revealjs" if self.renderer_id == "reveal" else "pptx": renderer_options,
+            }}), encoding="utf-8")
+            output_dir = staged / "output"
+            output_dir.mkdir()
+            command = [
+                quarto, "render", str(request.source_path), "--to",
+                "revealjs" if self.renderer_id == "reveal" else "pptx",
+                "--output", destination.name, "--output-dir", str(output_dir),
+                "--no-execute", "--metadata-file", str(metadata),
+            ]
+            try:
+                result = subprocess.run(command, cwd=str(request.source_path.parent),
+                                        capture_output=True, text=True, timeout=180, check=False)
+            except subprocess.TimeoutExpired as exc:
+                raise PresentationError("Styled presentation rendering timed out after 180 seconds.") from exc
+            except OSError as exc:
+                raise PresentationError(f"Unable to launch local Quarto: {exc}") from exc
+            if result.returncode:
+                detail = (result.stderr or result.stdout or "Styled presentation export failed.").strip()
+                raise PresentationError(detail[-4000:])
+            produced = output_dir / destination.name
+            if produced.is_symlink() or not produced.is_file():
+                raise PresentationError("Quarto did not produce the expected styled presentation.")
+            produced.replace(destination)
+        return PresentationExportResult(self.renderer_id, request.output_format, destination)
 
     def _render_styled_beamer(self, request: PresentationExportRequest) -> PresentationExportResult:
         """Use the same Quarto engine for styled Markdown and stored notebooks.

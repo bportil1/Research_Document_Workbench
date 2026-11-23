@@ -401,3 +401,35 @@ read local files; use only trusted third-party Beamer projects, or run the
 Workbench in an OS-level sandbox. Importing native projects is done through
 existing Workbench project/folder attachment, not the PS-04 theme-only importer.
 There is no Makefile execution or remote rendering service in this path.
+
+### PS-11: Reveal.js CSS and PowerPoint reference styling
+
+The existing `PresentationStyleRegistry` now holds two additional immutable
+style kinds: `reveal` (a CSS stylesheet with optional local image/font assets)
+and `powerpoint` (a `.pptx` reference document). Both are version-pinned by
+manifest/asset hashes, use the same style picker and saved-profile model, and
+are imported through the same local style inspection/install endpoints with
+`kind: "reveal"` or `kind: "powerpoint"`. Existing Beamer import requests that
+omit `kind` still default to `beamer`. CSS and PPTX may be imported as local
+files, directories or ZIPs; multiple discovered candidates require explicit
+selection. Imported CSS disallows `@import`, external URLs and references to
+unpackaged assets. PPTX reference documents must be real Office packages
+with a slide master and no external relationship targets. Import never runs
+file content, templates, Makefiles, or any remote service.
+
+The existing Quarto-backed Reveal.js and PowerPoint adapters now support an
+installed style during Markdown **and notebook** export, by writing a transient
+renderer-specific metadata file (`revealjs.css` or `pptx.reference-doc`) and
+staging registered assets in a temporary local directory. Styled Reveal.js
+exports request `embed-resources: true` to avoid dangling temporary CSS
+or JavaScript paths in the published HTML. Quarto is invoked
+with `--no-execute` and output is published only after a successful render.
+Unstyled notebook/Markdown exports remain on their original code paths.
+The style UI filters by actual renderer-compatible style kinds, and the same
+profile store preserves exact style versions. There is no automatic Beamer →
+CSS/PPTX translation. PS-09's preview provider still handles Beamer only;
+CSS/PPTX preview providers are not included in PS-11.
+
+Verify the Quarto CLI behavior and relative CSS asset packaging against the
+installed Quarto version in the user's local environment; CI uses simulated
+local Quarto calls because the validation runtime lacks Quarto.

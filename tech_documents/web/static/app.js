@@ -3579,6 +3579,7 @@ const presentationStylePreviewImages = document.getElementById("presentationStyl
 const presentationStylePreviewPdf = document.getElementById("presentationStylePreviewPdf");
 const presentationStyleCandidate = document.getElementById("presentationStyleCandidate");
 const presentationStyleZip = document.getElementById("presentationStyleZip");
+const presentationStyleImportKind = document.getElementById("presentationStyleImportKind");
 const presentationStylePath = document.getElementById("presentationStylePath");
 let presentationStyleSession = null;
 
@@ -3895,24 +3896,25 @@ function presentationStyleImportPayload(mode) {
   const upload = presentationStyleZip.files?.[0];
   const path = presentationStylePath.value.trim();
   const fields = mode === "import" ? {
+    kind: presentationStyleImportKind.value,
     version: document.getElementById("presentationStyleVersion").value.trim(),
     selector: presentationStyleCandidate.value,
     label: document.getElementById("presentationStyleLabel").value.trim(),
-  } : {};
+  } : { kind: presentationStyleImportKind.value };
   if (upload) {
     const form = new FormData();
     form.append("archive", upload);
     for (const [key, value] of Object.entries(fields)) if (value) form.append(key, value);
     return form;
   }
-  if (!path) throw new Error("Choose a local ZIP or enter a project-relative directory/ZIP path.");
+  if (!path) throw new Error("Choose a local theme file or a project-relative directory/file path.");
   return JSON.stringify({ project: session.project, path, ...fields });
 }
 
 async function inspectPresentationStyleSource() {
   const session = presentationStyleSession;
   resetPresentationStyleInspection();
-  presentationStyleImportStatus.textContent = "Inspecting Beamer source locally…";
+  presentationStyleImportStatus.textContent = "Inspecting presentation style assets locally…";
   const response = await api("/api/presentation-styles/inspect", {
     method: "POST", body: presentationStyleImportPayload("inspect"),
   });
@@ -3927,7 +3929,7 @@ async function inspectPresentationStyleSource() {
   presentationStyleCandidate.disabled = !response.inspection.themes.length;
   document.getElementById("presentationStyleImportBtn").disabled = !response.inspection.themes.length;
   const notes = response.inspection.warnings || [];
-  presentationStyleImportStatus.textContent = `${response.inspection.themes.length} theme(s); ${response.inspection.project_entrypoints.length} presentation source(s).${notes.length ? ` Warnings: ${notes.join("; ")}` : ""}`;
+  presentationStyleImportStatus.textContent = `${response.inspection.themes.length} style(s) detected; ${response.inspection.project_entrypoints.length} presentation source(s).${notes.length ? ` Warnings: ${notes.join("; ")}` : ""}`;
 }
 
 async function importSelectedPresentationStyle() {
@@ -3939,8 +3941,8 @@ async function importSelectedPresentationStyle() {
   });
   if (presentationStyleSession !== session) return;
   const imported = response.style;
-  // Importing a Beamer style makes Beamer the expected renderer, if available.
-  if (presentationStyleSession?.outputs.some(option => option.id === "beamer:pdf")) presentationStyleRenderer.value = "beamer:pdf";
+  const output = { beamer: "beamer:pdf", reveal: "reveal:html", powerpoint: "powerpoint:pptx" }[imported.kind];
+  if (presentationStyleSession?.outputs.some(option => option.id === output)) presentationStyleRenderer.value = output;
   await loadPresentationStyleCatalog({ desiredRef: imported });
   presentationStyleImportStatus.textContent = `Installed ${imported.label} v${imported.version}. No original presentation content was imported.`;
   resetPresentationStyleInspection();
@@ -5192,6 +5194,13 @@ document.getElementById("presentationStyleRemoveBtn")?.addEventListener("click",
   presentationStyleAction(uninstallSelectedPresentationStyle()));
 presentationStyleZip?.addEventListener("change", resetPresentationStyleInspection);
 presentationStylePath?.addEventListener("input", resetPresentationStyleInspection);
+presentationStyleImportKind?.addEventListener("change", () => {
+  presentationStyleZip.value = "";
+  presentationStyleZip.accept = presentationStyleImportKind.value === "beamer"
+    ? ".zip,application/zip" : presentationStyleImportKind.value === "reveal"
+      ? ".zip,.css,application/zip,text/css" : ".zip,.pptx,application/zip";
+  resetPresentationStyleInspection();
+});
 presentationStyleDialog?.addEventListener("close", () => { presentationStyleSession = null; });
 document.getElementById("notebookPresentationCloseBtn")?.addEventListener("click", () =>
   closeNotebookPresentation().catch(error => setStatus(error.message)));

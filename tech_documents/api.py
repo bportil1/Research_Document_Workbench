@@ -46,7 +46,7 @@ from .notebook_exports import NotebookExportService
 from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
 from .presentations import (
     PresentationError, PresentationExportRequest, PresentationService, PresentationStyleRegistry, StyleReference, existing_export_renderers,
-    inspect_beamer_source, import_beamer_style, PresentationBuildProfile,
+    inspect_beamer_source, import_beamer_style, inspect_asset_style_source, import_asset_style, PresentationBuildProfile,
     PresentationProfileStore, style_manifest_digest, PresentationPreviewService,
 )
 from .presentations.native_beamer import is_beamer_entrypoint, discover_beamer_entrypoints
@@ -542,6 +542,23 @@ class DocumentEngine:
         """Install one selected theme into the local immutable style registry."""
         manifest = import_beamer_style(
             self.presentation_styles, source, version=version,
+            selector=selector, identifier=identifier, label=label,
+            description=description,
+        )
+        return manifest.as_dict()
+
+    def inspect_asset_styles(self, source: str | Path, *, kind: str) -> dict[str, object]:
+        """Inspect Reveal CSS or PowerPoint reference assets without executing them."""
+        return inspect_asset_style_source(source, kind=kind)
+
+    def import_asset_style(
+        self, source: str | Path, *, kind: str, version: str,
+        selector: str | None = None, identifier: str | None = None,
+        label: str | None = None, description: str = "",
+    ) -> dict[str, object]:
+        """Install a version-pinned CSS or PPTX style in the common registry."""
+        manifest = import_asset_style(
+            self.presentation_styles, source, kind=kind, version=version,
             selector=selector, identifier=identifier, label=label,
             description=description,
         )

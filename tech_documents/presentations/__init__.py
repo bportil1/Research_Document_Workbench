@@ -13,6 +13,7 @@ from .legacy_adapters import ExistingExportRenderer, existing_export_renderers
 from .service import PresentationService
 from .previews import PresentationPreviewService, PreviewStatus, BeamerPreviewProvider
 from .profiles import PresentationBuildProfile, PresentationProfileStore, style_manifest_digest
+from .asset_style_importer import inspect_asset_style_source, import_asset_style
 from .beamer_importer import (
     BeamerInspection, BeamerThemeCandidate, import_beamer_style, inspect_beamer_source,
 )
@@ -51,4 +52,6 @@ __all__ = [
     "BeamerThemeCandidate",
     "inspect_beamer_source",
     "import_beamer_style",
+    "inspect_asset_style_source",
+    "import_asset_style",
 ]

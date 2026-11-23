@@ -333,16 +333,19 @@ def presentation_export_capabilities(project: str, filename: str) -> Response:
 # Browser-supplied filesystem paths are restricted to an attached Workbench project.
 # A ZIP upload is staged in a disposable local directory and is never executed.
 @contextmanager
-def _beamer_import_source():
+def _presentation_style_import_source():
     archive = request.files.get("archive")
     payload = request.form if archive is not None else request.get_json(silent=True)
     if not isinstance(payload, dict) and archive is None:
-        raise PresentationError("Beamer import requires JSON or a ZIP upload.")
+        raise PresentationError("Style import requires JSON or a local file upload.")
     if archive is not None:
-        if not archive.filename or not archive.filename.lower().endswith(".zip"):
-            raise PresentationError("Select a .zip archive for Beamer import.")
-        with tempfile.TemporaryDirectory(prefix="workbench-beamer-upload-") as temporary:
-            destination = Path(temporary) / "upload.zip"
+        kind = payload.get("kind", "beamer")
+        allowed = {"beamer": {".zip"}, "reveal": {".zip", ".css"},
+                   "powerpoint": {".zip", ".pptx"}}
+        if kind not in allowed or Path(archive.filename or "").suffix.lower() not in allowed[kind]:
+            raise PresentationError("Choose a supported ZIP, CSS, or PPTX style upload for the selected renderer.")
+        with tempfile.TemporaryDirectory(prefix="workbench-style-upload-") as temporary:
+            destination = Path(temporary) / ("upload" + Path(archive.filename).suffix.lower())
             archive.save(destination)
             yield destination, payload
         return
@@ -352,7 +355,7 @@ def _beamer_import_source():
         raise PresentationError("Choose a Workbench project and a relative directory or ZIP path.")
     source = engine.item_path(project, relative, allow_empty=True)
     if not source.exists():
-        raise PresentationError("Selected Beamer source does not exist in this project.")
+        raise PresentationError("Selected style source does not exist in this project.")
     yield source, payload
 
 
@@ -422,8 +425,14 @@ def presentation_style_preview_file(kind: str, identifier: str, version: str, fi
 @app.post("/api/presentation-styles/inspect")
 def inspect_presentation_style() -> Response:
     try:
-        with _beamer_import_source() as (source, _payload):
-            inspected = engine.inspect_beamer_styles(source)
+        with _presentation_style_import_source() as (source, payload):
+            kind = payload.get("kind", "beamer")
+            if kind == "beamer":
+                inspected = engine.inspect_beamer_styles(source)
+            elif kind in {"reveal", "powerpoint"}:
+                inspected = engine.inspect_asset_styles(source, kind=kind)
+            else:
+                raise PresentationError("Unsupported presentation style renderer.")
     except (DocumentEngineError, ValueError, OSError) as exc:
         return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
     return jsonify({"inspection": inspected})
@@ -432,7 +441,10 @@ def inspect_presentation_style() -> Response:
 @app.post("/api/presentation-styles/import")
 def import_presentation_style() -> Response:
     try:
-        with _beamer_import_source() as (source, payload):
+        with _presentation_style_import_source() as (source, payload):
+            kind = payload.get("kind", "beamer")
+            if kind not in {"beamer", "reveal", "powerpoint"}:
+                raise PresentationError("Unsupported presentation style renderer.")
             version = payload.get("version", "")
             if not isinstance(version, str):
                 raise PresentationError("Style version must be a string.")
@@ -443,7 +455,10 @@ def import_presentation_style() -> Response:
                     raise PresentationError(f"{field} must be a string.")
                 if value is not None and (field == "description" or value):
                     options[field] = value
-            manifest = engine.import_beamer_style(source, version=version, **options)
+            if kind == "beamer":
+                manifest = engine.import_beamer_style(source, version=version, **options)
+            else:
+                manifest = engine.import_asset_style(source, kind=kind, version=version, **options)
     except (DocumentEngineError, ValueError, OSError) as exc:
         return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
     return jsonify({"ok": True, "style": manifest}), 201

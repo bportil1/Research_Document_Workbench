@@ -394,15 +394,23 @@
         <button id="presentationStyleExportBtn" type="button" class="primary">Export now</button>
       </div>
       <details class="presentation-style-import">
-        <summary>Import or manage Beamer themes</summary>
-        <p class="notebook-export-description">Import a local ZIP or a directory/ZIP already in the current Workbench project. Sources stay on this machine; import never runs project build scripts.</p>
+        <summary>Import or manage presentation styles</summary>
+        <p class="notebook-export-description">Import Beamer ZIPs, Reveal.js CSS styles, or PowerPoint reference templates from local files or project paths. Imported assets stay local; scripts are never executed during import.</p>
         <label class="notebook-export-field">
-          <span>Beamer ZIP</span>
+          <span>Import style format</span>
+          <select id="presentationStyleImportKind">
+            <option value="beamer">Beamer theme</option>
+            <option value="reveal">Reveal.js CSS</option>
+            <option value="powerpoint">PowerPoint reference template</option>
+          </select>
+        </label>
+        <label class="notebook-export-field">
+          <span>Local style ZIP, CSS, or PPTX</span>
           <input id="presentationStyleZip" type="file" accept=".zip,application/zip">
         </label>
         <label class="notebook-export-field">
           <span>Or project path</span>
-          <input id="presentationStylePath" type="text" placeholder="slides/theme-directory (project-relative)">
+          <input id="presentationStylePath" type="text" placeholder="slides/theme.zip or styles/custom.css (project-relative)">
         </label>
         <button id="presentationStyleInspectBtn" type="button">Inspect local source</button>
         <label class="notebook-export-field">

@@ -157,11 +157,11 @@ class StyleRegistryTests(unittest.TestCase):
         self.assertEqual(engine.presentation_style_catalog(renderer_id="beamer"), [empty.as_dict()])
         self.assertEqual(engine.presentation_style_catalog(renderer_id="reveal"), [])
         self.assertIs(engine.presentations.styles, engine.presentation_styles)
-        # PS-05 wires the Beamer adapter to the registry; other adapters
-        # still do not claim custom style support.
+        # PS-11 wires all three built-in presentation renderers to the registry.
         caps = {cap["id"]: cap for cap in engine.presentation_renderer_capabilities()}
         self.assertEqual(caps["beamer"]["style_kinds"], ["beamer"])
-        self.assertEqual(caps["reveal"]["style_kinds"], [])
+        self.assertEqual(caps["reveal"]["style_kinds"], ["reveal"])
+        self.assertEqual(caps["powerpoint"]["style_kinds"], ["powerpoint"])
 
 
 class StyleResolutionInServiceTests(unittest.TestCase):
