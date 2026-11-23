@@ -10,3 +10,6 @@ figures/*
 tech_documents/web/static/vendor/ace/
 tech_documents/web/static/vendor/reveal/
 *.egg-info/
+
+# Locally installed, versioned presentation styles (PS-03)
+.workbench-presentation-styles/

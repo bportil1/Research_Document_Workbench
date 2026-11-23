@@ -10,6 +10,12 @@ from .models import (
 from .renderers import PLANNED_RENDERERS, PresentationRenderer
 from .legacy_adapters import ExistingExportRenderer, existing_export_renderers
 from .service import PresentationService
+from .style_registry import (
+    InstalledStyle,
+    PresentationStyleRegistry,
+    StyleAsset,
+    StyleManifest,
+)
 
 __all__ = [
     "PLANNED_RENDERERS",
@@ -22,4 +28,8 @@ __all__ = [
     "PresentationService",
     "RendererCapabilities",
     "StyleReference",
+    "InstalledStyle",
+    "PresentationStyleRegistry",
+    "StyleAsset",
+    "StyleManifest",
 ]

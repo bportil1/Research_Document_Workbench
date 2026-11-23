@@ -114,3 +114,40 @@ HTTP routes are:
 
 No new graphical controls, theme import, style persistence, or native `.tex`
 rendering are introduced in PS-02. Those remain separately scheduled.
+
+## PS-03 — Persistent presentation style registry
+
+`DocumentEngine.presentation_styles` is a local `PresentationStyleRegistry` rooted at
+`<workbench base>/.workbench-presentation-styles/`, kept out of Git by default.
+`DocumentEngine.presentation_style_catalog(kind=..., renderer_id=...)` lists
+installed style manifests without needing an active presentation or a browser.
+`PresentationService` can optionally receive the registry, validating pinned
+style references before dispatching to a renderer that advertises style support.
+The PS-02 export adapters **still reject custom styles** until PS-05 adds
+style-aware rendering; registering a style does not imply it is renderable.
+
+The registry stores immutable packages at
+`styles/<kind>/<identifier>/<version>/`, each containing a JSON manifest and
+copied `assets/`. Schema v1 records a display label, optional description and
+provenance label, compatible renderer IDs, and for each asset its canonical
+relative path, byte size and SHA-256. Callers reference a specific version using
+`StyleReference(identifier, version, kind)`; a change must be installed as a
+new version rather than overwriting the previous one.
+
+- `install(...)` copies only a caller-provided list of local relative asset paths
+  into a temporary staging directory, then atomically publishes the package.
+  It rejects traversal paths, symlinks, duplicates, and oversized asset sets.
+- `list_styles(...)` discovers versions and optionally filters by style kind or
+  compatible renderer. A corrupt manifest is reported rather than silently
+  accepted. It does not compile or execute any theme content.
+- `resolve(reference, renderer_id=...)` checks the exact manifest/version,
+  declared renderer compatibility, and asset integrity. `uninstall(reference)`
+  removes one version without disturbing other styles or versions.
+- No remote services, external asset downloads, imported Makefile execution,
+  GUI controls, Beamer project parsing, or ZIP extraction are part of PS-03.
+  Beamer discovery/import is PS-04; style-aware compilation is PS-05.
+
+Runtime-independent style metadata and assets are separate from presentation
+sources, which remain unchanged; no style persistence is written into project
+content in this sprint. Installed styles are a local per-Workbench registry and
+must be explicitly exported or reinstalled to transfer between machines.

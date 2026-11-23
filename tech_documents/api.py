@@ -44,7 +44,7 @@ from .latex_tools import parse_latex_log, preflight_latex
 from .notebook_exports import NotebookExportService
 from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
 from .presentations import (
-    PresentationExportRequest, PresentationService, existing_export_renderers,
+    PresentationExportRequest, PresentationService, PresentationStyleRegistry, existing_export_renderers,
 )
 from .paths import (
     ALLOWED_EXTENSIONS,
@@ -81,7 +81,10 @@ class DocumentEngine:
         self.project_registry_path = self.base_dir / ".workbench-projects.json"
         self.notebooks = NotebookRuntime()
         self.notebook_exports = NotebookExportService()
-        self.presentations = PresentationService(existing_export_renderers(self.notebook_exports))
+        self.presentation_styles = PresentationStyleRegistry(self.base_dir / ".workbench-presentation-styles")
+        self.presentations = PresentationService(
+            existing_export_renderers(self.notebook_exports), styles=self.presentation_styles,
+        )
         self.ensure_directories()
 
     # ------------------------------------------------------------------
@@ -499,6 +502,14 @@ class DocumentEngine:
     def presentation_renderer_capabilities(self) -> list[dict[str, object]]:
         """Report locally available presentation renderers and source formats."""
         return self.presentations.capabilities()
+
+    def presentation_style_catalog(
+        self, *, kind: str | None = None, renderer_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """List installed, pinned presentation styles (independent of browser/UI)."""
+        return [style.as_dict() for style in self.presentation_styles.list_styles(
+            kind=kind, renderer_id=renderer_id,
+        )]
 
     def _presentation_source(self, project: str, filename: str) -> tuple[Path, str]:
         source = self.editable_file_path(project, filename)

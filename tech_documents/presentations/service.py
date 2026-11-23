@@ -11,6 +11,7 @@ from .models import (
     RendererCapabilities,
 )
 from .renderers import PLANNED_RENDERERS, PresentationRenderer
+from .style_registry import PresentationStyleRegistry
 
 
 class PresentationService:
@@ -20,7 +21,11 @@ class PresentationService:
     integrates their adapters, planned renderer capabilities remain unavailable.
     """
 
-    def __init__(self, renderers: Iterable[PresentationRenderer] = ()) -> None:
+    def __init__(
+        self, renderers: Iterable[PresentationRenderer] = (), *,
+        styles: PresentationStyleRegistry | None = None,
+    ) -> None:
+        self.styles = styles
         self._renderers: dict[str, PresentationRenderer] = {}
         for renderer in renderers:
             self.register(renderer)
@@ -70,6 +75,10 @@ class PresentationService:
             request.style.kind if request.style else None,
         ):
             raise PresentationError("Renderer does not support the requested source, output, or style kind.")
+        if request.style is not None and self.styles is not None:
+            # A renderer's style support does not imply a package exists. PS-05
+            # will consume this verified, pinned reference when rendering.
+            self.styles.resolve(request.style, renderer_id=request.renderer_id)
 
         project_root = request.project_root.resolve()
         source_path = request.source_path.resolve()
