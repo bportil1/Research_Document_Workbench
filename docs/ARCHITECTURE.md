@@ -502,3 +502,22 @@ exports, and portable ZIP import. Browser uploads are subject to Flask's
 existing 40 MiB upload limit. A portable bundle is a local file, never an
 external URL or cloud service. Family choices never mutate the active
 presentation source or change its saved profile implicitly.
+
+### PS-13: Local acceptance and export reliability
+
+The unified presentation pipeline has a local-only acceptance runner in
+`scripts/validate_presentations.py` and a deployment checklist in
+`docs/PRESENTATION_ACCEPTANCE.md`. Native Beamer and, if supplied, the original
+MSU `csci447.zip` reference theme can be compiled and previewed without Quarto.
+The acceptance runner reports missing optional dependencies as **skips**, not
+successes; real Quarto and HTTP/browser verification must run on a host that
+has those dependencies.
+
+Presentation outputs derived from nested source paths use deterministic,
+collision-resistant default filenames. Explicit output names are unaffected,
+including intentional re-exports to the same name. Unstyled Quarto Markdown
+exports and Quarto notebook exports now publish only complete successful
+artifacts, and notebook Quarto exports explicitly disable code execution.
+Quarto Reveal.js HTML requests embedded assets to avoid dangling references
+when its temporary staging directory is removed. Legacy notebook APIs and
+native source formats are preserved.

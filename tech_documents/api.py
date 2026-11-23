@@ -51,6 +51,7 @@ from .presentations import (
     BrandingTokens, PresentationStyleFamilyRegistry, export_style_bundle, import_style_bundle,
 )
 from .presentations.native_beamer import is_beamer_entrypoint, discover_beamer_entrypoints
+from .presentations.legacy_adapters import presentation_output_stem
 from .paths import (
     ALLOWED_EXTENSIONS,
     NOTEBOOK_EXTENSIONS,
@@ -793,6 +794,11 @@ class DocumentEngine:
         if source_kind == "latex" and style is not None:
             raise PresentationError("Native Beamer uses the project theme and does not accept installed style overrides.")
         if conversion_target is not None or document_format is not None:
+            # The unified dialog should not overwrite two nested presentations
+            # with identical basenames. Legacy direct-export endpoints retain
+            # their existing naming rules; explicit names always win.
+            if output_name is None:
+                output_name = presentation_output_stem(source, root)
             if conversion_target is not None and document_format is not None:
                 raise PresentationError("Choose only one presentation export operation.")
             if renderer_id is not None or output_format is not None or style is not None or use_saved_profile:

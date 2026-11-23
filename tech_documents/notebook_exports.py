@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
 from .errors import DocumentEngineError
@@ -183,11 +184,16 @@ class NotebookExportService:
             raise NotebookExportError(capability["reason"])
 
         export_dir = project_root / "builds" / "notebooks"
+        if ((project_root / "builds").is_symlink() or export_dir.is_symlink()
+                or not export_dir.resolve().is_relative_to(project_root)):
+            raise NotebookExportError("Notebook export directory must stay inside the project and cannot be a symlink.")
         export_dir.mkdir(parents=True, exist_ok=True)
         stem = self._safe_stem(output_name or notebook_path.stem)
         if stem.lower().endswith(spec.extension.lower()):
             stem = stem[: -len(spec.extension)]
         destination = export_dir / f"{stem}{spec.extension}"
+        if destination.is_symlink():
+            raise NotebookExportError("Notebook export destination cannot be a symlink.")
 
         if spec.engine.startswith("nbconvert"):
             self._export_nbconvert(notebook_path, destination, format_id)
@@ -285,30 +291,32 @@ class NotebookExportService:
             "pptx": "pptx",
             "beamer": "beamer",
         }[format_id]
-        command = [
-            quarto,
-            "render",
-            str(notebook_path),
-            "--to",
-            target,
-            "--output",
-            destination.name,
-            "--output-dir",
-            str(destination.parent),
-        ]
-        completed = subprocess.run(
-            command,
-            cwd=str(notebook_path.parent),
-            text=True,
-            capture_output=True,
-            timeout=180,
-            check=False,
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "Quarto export failed.").strip()
-            raise NotebookExportError(detail[-4000:])
-        if not destination.exists():
-            raise NotebookExportError("Quarto completed without producing the expected output file.")
+        # Quarto document/presentation exports must consume *stored* notebook
+        # results. Never execute a code cell as a side effect of exporting.
+        # Scratch output also keeps a failed render from damaging an existing
+        # successful document (same guarantee as the shared Markdown adapter).
+        with tempfile.TemporaryDirectory(prefix=".notebook-quarto-", dir=destination.parent) as folder:
+            candidate = Path(folder) / destination.name
+            command = [
+                quarto, "render", str(notebook_path), "--to", target,
+                "--output", destination.name, "--output-dir", folder,
+                "--no-execute",
+            ]
+            try:
+                completed = subprocess.run(
+                    command, cwd=str(notebook_path.parent), text=True,
+                    capture_output=True, timeout=180, check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise NotebookExportError("Notebook Quarto export timed out after 180 seconds.") from exc
+            except OSError as exc:
+                raise NotebookExportError(f"Unable to start the local Quarto renderer: {exc}") from exc
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "Quarto export failed.").strip()
+                raise NotebookExportError(detail[-4000:])
+            if candidate.is_symlink() or not candidate.is_file():
+                raise NotebookExportError("Quarto completed without producing the expected output file.")
+            candidate.replace(destination)
 
 
 __all__ = ["NotebookExportError", "NotebookExportService", "EXPORT_FORMATS"]

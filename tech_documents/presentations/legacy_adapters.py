@@ -6,6 +6,7 @@ format-specific bindings for the shared presentation service, not theme manageme
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import json
 import shutil
 import subprocess
@@ -33,6 +34,23 @@ _TARGETS = {
     "reveal": ("Reveal.js", "html", "reveal", "revealjs", ".html"),
     "powerpoint": ("PowerPoint", "pptx", "pptx", "pptx", ".pptx"),
 }
+
+
+def presentation_output_stem(source: Path, project_root: Path) -> str:
+    """Stable, collision-resistant defaults for a source within a project.
+
+    Root-level files retain their historical filenames. Nested files include
+    a short fingerprint of their relative path, so ``a/talk.md`` and
+    ``b/talk.md`` cannot accidentally overwrite one another. Explicit output
+    names remain caller-controlled and may intentionally replace an export.
+    """
+    relative = source.resolve().relative_to(project_root.resolve())
+    filename = relative.name
+    stem = filename[:-10] if filename.lower().endswith(".slides.md") else relative.stem
+    if len(relative.parts) == 1:
+        return stem
+    path_hash = hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()[:12]
+    return f"{stem[:64]}-{path_hash}"
 
 
 class ExistingExportRenderer:
@@ -117,7 +135,7 @@ class ExistingExportRenderer:
                 request.source_path,
                 project_root=request.project_root,
                 format_id=notebook_format,
-                output_name=request.output_name,
+                output_name=request.output_name or presentation_output_stem(request.source_path, request.project_root),
             )
             return PresentationExportResult(self.renderer_id, output, request.project_root / existing["path"])
         if request.source_kind != "markdown":
@@ -131,34 +149,43 @@ class ExistingExportRenderer:
 
         export_dir = request.project_root / "builds" / "presentations"
         self._check_export_directory(request.project_root, export_dir)
-        source_name = request.source_path.name
-        source_stem = source_name[:-10] if source_name.lower().endswith(".slides.md") else request.source_path.stem
-        stem = self.notebooks._safe_stem(request.output_name or source_stem)
+        stem = self.notebooks._safe_stem(
+            request.output_name or presentation_output_stem(request.source_path, request.project_root)
+        )
         if stem.lower().endswith(extension):
             stem = stem[:-len(extension)]
         destination = export_dir / f"{stem}{extension}"
         if destination.is_symlink() or not destination.resolve().is_relative_to(request.project_root.resolve()):
             raise PresentationError("Presentation output must remain inside its project and cannot be a symlink.")
         export_dir.mkdir(parents=True, exist_ok=True)
-        command = [
-            quarto, "render", str(request.source_path), "--to", quarto_format,
-            "--output", destination.name, "--output-dir", str(export_dir),
-            "--no-execute",
-        ]
-        try:
-            completed = subprocess.run(
-                command, cwd=str(request.source_path.parent), text=True,
-                capture_output=True, timeout=180, check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise PresentationError("Presentation rendering timed out after 180 seconds.") from exc
-        except OSError as exc:
-            raise PresentationError(f"Unable to launch the local Quarto renderer: {exc}") from exc
-        if completed.returncode:
-            detail = (completed.stderr or completed.stdout or "Quarto presentation export failed.").strip()
-            raise PresentationError(detail[-4000:])
-        if not destination.is_file():
-            raise PresentationError("Quarto completed without producing the expected presentation.")
+        # Quarto must never write directly to a previous successful export:
+        # failed or incomplete compiles leave the last good artifact untouched.
+        with tempfile.TemporaryDirectory(prefix=".presentation-output-", dir=export_dir) as scratch:
+            candidate = Path(scratch) / destination.name
+            command = [
+                quarto, "render", str(request.source_path), "--to", quarto_format,
+                "--output", destination.name, "--output-dir", str(scratch),
+                "--no-execute",
+            ]
+            # A staged HTML build must not reference assets discarded with
+            # its temporary output directory; embed Quarto/Reveal resources.
+            if self.renderer_id == "reveal":
+                command.extend(["-M", "embed-resources:true"])
+            try:
+                completed = subprocess.run(
+                    command, cwd=str(request.source_path.parent), text=True,
+                    capture_output=True, timeout=180, check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise PresentationError("Presentation rendering timed out after 180 seconds.") from exc
+            except OSError as exc:
+                raise PresentationError(f"Unable to launch the local Quarto renderer: {exc}") from exc
+            if completed.returncode:
+                detail = (completed.stderr or completed.stdout or "Quarto presentation export failed.").strip()
+                raise PresentationError(detail[-4000:])
+            if candidate.is_symlink() or not candidate.is_file():
+                raise PresentationError("Quarto completed without producing the expected presentation.")
+            candidate.replace(destination)
         return PresentationExportResult(self.renderer_id, output, destination)
 
     def _render_native_beamer(self, request: PresentationExportRequest) -> PresentationExportResult:
@@ -176,9 +203,9 @@ class ExistingExportRenderer:
         if (root / "builds").is_symlink() or export_dir.is_symlink():
             raise PresentationError("Native Beamer build directories must not be symlinks.")
         self._check_export_directory(root, export_dir)
-        # Include the relative source directory in the default name. A project
-        # may have multiple independent Beamer mains named presentation.tex.
-        default_name = request.source_path.relative_to(root).with_suffix("").as_posix().replace("/", "__")
+        # Nested mains receive distinct stable names without rewriting their
+        # source or assuming that their basenames are unique in this project.
+        default_name = presentation_output_stem(request.source_path, root)
         stem = self.notebooks._safe_stem(request.output_name or default_name)
         if stem.lower().endswith(".pdf"):
             stem = stem[:-4]
@@ -227,10 +254,9 @@ class ExistingExportRenderer:
         folder = "notebooks" if request.source_kind == "notebook" else "presentations"
         export_dir = request.project_root / "builds" / folder
         self._check_export_directory(request.project_root, export_dir)
-        stem = request.source_path.stem
-        if request.source_kind == "markdown" and request.source_path.name.lower().endswith(".slides.md"):
-            stem = request.source_path.name[:-10]
-        stem = self.notebooks._safe_stem(request.output_name or stem)
+        stem = self.notebooks._safe_stem(
+            request.output_name or presentation_output_stem(request.source_path, request.project_root)
+        )
         extension = ".html" if self.renderer_id == "reveal" else ".pptx"
         if stem.lower().endswith(extension):
             stem = stem[:-len(extension)]
@@ -302,10 +328,9 @@ class ExistingExportRenderer:
         folder = "notebooks" if request.source_kind == "notebook" else "presentations"
         export_dir = request.project_root / "builds" / folder
         self._check_export_directory(request.project_root, export_dir)
-        source_stem = request.source_path.stem
-        if request.source_kind == "markdown" and request.source_path.name.lower().endswith(".slides.md"):
-            source_stem = request.source_path.name[:-10]
-        stem = self.notebooks._safe_stem(request.output_name or source_stem)
+        stem = self.notebooks._safe_stem(
+            request.output_name or presentation_output_stem(request.source_path, request.project_root)
+        )
         if stem.lower().endswith(".pdf"):
             stem = stem[:-4]
         destination = export_dir / f"{stem}.pdf"
@@ -341,8 +366,14 @@ class ExistingExportRenderer:
 
     @staticmethod
     def _check_export_directory(root: Path, directory: Path) -> None:
-        if not directory.resolve().is_relative_to(root.resolve()):
+        root = root.resolve()
+        if not directory.resolve().is_relative_to(root):
             raise PresentationError("Presentation build directory must remain inside its project.")
+        current = root
+        for part in directory.relative_to(root).parts:
+            current = current / part
+            if current.is_symlink():
+                raise PresentationError("Presentation build directory must not contain symlinks.")
 
 
 def existing_export_renderers(
