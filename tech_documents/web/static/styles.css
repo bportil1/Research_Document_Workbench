@@ -2052,3 +2052,13 @@ body {
 @media (max-width: 760px) {
   .presentation-style-dialog .notebook-export-field { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* PS-09: cached renderings of registered themes; never remote images. */
+.presentation-theme-preview { border: 1px solid #c8d7e4; border-radius: 8px; padding: 12px; }
+.presentation-theme-preview[hidden] { display: none; }
+.presentation-theme-preview-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.presentation-theme-preview-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 12px; margin: 12px 0; }
+.presentation-theme-preview-images:empty { display: none; }
+.presentation-theme-preview-images figure { margin: 0; min-width: 0; }
+.presentation-theme-preview-images img { width: 100%; height: auto; border: 1px solid #c8d7e4; border-radius: 4px; background: white; display: block; }
+.presentation-theme-preview-images figcaption { font-size: .84rem; margin-top: 4px; }

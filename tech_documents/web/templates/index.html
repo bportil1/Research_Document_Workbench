@@ -369,6 +369,16 @@
         <select id="presentationStyleSelection"></select>
       </label>
       <div id="presentationStyleDescription" class="notebook-export-description" aria-live="polite"></div>
+      <section id="presentationStylePreviewPanel" class="presentation-theme-preview" aria-label="Registered style preview" hidden>
+        <div class="presentation-theme-preview-toolbar">
+          <strong>Theme preview</strong>
+          <button id="presentationStylePreviewBtn" type="button">Generate local preview</button>
+        </div>
+        <p class="notebook-export-description">Representative title and content slides, rendered with the selected installed theme. Preview compilation runs local TeX macros: use trusted themes only.</p>
+        <div id="presentationStylePreviewStatus" class="notebook-export-description" role="status" aria-live="polite"></div>
+        <div id="presentationStylePreviewImages" class="presentation-theme-preview-images"></div>
+        <a id="presentationStylePreviewPdf" href="#" target="_blank" rel="noopener noreferrer" hidden>Open preview PDF</a>
+      </section>
       <label class="notebook-export-field">
         <span>Output filename</span>
         <input id="presentationStyleOutput" type="text" placeholder="presentation.pdf">

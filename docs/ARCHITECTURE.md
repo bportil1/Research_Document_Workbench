@@ -343,3 +343,27 @@ presentation-source backup. Pre-existing `/convert` and `/api/notebooks/.../expo
 HTTP routes are retained for older clients; they no longer require a separate
 presentation export dialog. The renderer-specific style import and profile APIs
 from PS-07 are unchanged. PS-09 will add rendered theme previews.
+
+### PS-09: On-demand local presentation theme previews
+
+`PresentationPreviewService` is a renderer-neutral preview-provider registry. It
+reads pinned styles from the PS-03 registry, verifies asset integrity, and stores
+rendered preview artifacts under `.workbench-presentation-previews/` keyed by the
+style reference plus its full manifest digest. Preview artifacts are independent
+of source presentation files, project build outputs and PS-06 saved profiles.
+
+The initial `BeamerPreviewProvider` compiles a fixed two-slide standalone TeX
+sample using the selected registered theme and local `pdflatex`, then uses local
+`pdftoppm` to produce two PNG thumbnails. Preview generation requires explicit
+user action through a POST endpoint; selection and GET routes only retrieve
+existing cached results, without invoking a compiler. A PDF remains available
+for detailed inspection. Preview cache entries are invalidated by manifest digest
+changes; missing styles cannot serve old previews.
+
+Compiling LaTeX themes executes TeX macros. `-no-shell-escape` disables the usual
+shell-escape mechanism, but TeX is **not an isolation sandbox**: preview only
+trusted styles, and consider a container or OS-level sandbox for untrusted themes.
+No Makefiles are run, no remote services are contacted, and no source content is
+rewritten. Theme previews are representative sample slides rather than guarantees
+of pixel-identical Quarto output. Additional preview providers can be registered
+later for Reveal.js and PowerPoint; those formats are not yet previewable.

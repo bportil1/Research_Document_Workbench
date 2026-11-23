@@ -46,7 +46,7 @@ from .presentation_transfer import notebook_to_presentation_markdown, presentati
 from .presentations import (
     PresentationError, PresentationExportRequest, PresentationService, PresentationStyleRegistry, StyleReference, existing_export_renderers,
     inspect_beamer_source, import_beamer_style, PresentationBuildProfile,
-    PresentationProfileStore, style_manifest_digest,
+    PresentationProfileStore, style_manifest_digest, PresentationPreviewService,
 )
 from .paths import (
     ALLOWED_EXTENSIONS,
@@ -85,6 +85,9 @@ class DocumentEngine:
         self.notebook_exports = NotebookExportService()
         self.presentation_styles = PresentationStyleRegistry(self.base_dir / ".workbench-presentation-styles")
         self.presentation_profiles = PresentationProfileStore(self.base_dir / ".workbench-presentation-configs")
+        self.presentation_previews = PresentationPreviewService(
+            self.presentation_styles, self.base_dir / ".workbench-presentation-previews",
+        )
         self.presentations = PresentationService(
             existing_export_renderers(self.notebook_exports, styles=self.presentation_styles), styles=self.presentation_styles,
         )
@@ -513,6 +516,16 @@ class DocumentEngine:
         return [style.as_dict() for style in self.presentation_styles.list_styles(
             kind=kind, renderer_id=renderer_id,
         )]
+
+    def presentation_style_preview(self, reference: StyleReference, *, generate: bool = False) -> dict[str, object]:
+        """Read or explicitly build the local preview for one pinned style version."""
+        status = (self.presentation_previews.generate(reference) if generate
+                  else self.presentation_previews.status(reference))
+        return status.as_dict()
+
+    def presentation_style_preview_file(self, reference: StyleReference, name: str) -> Path:
+        """Retrieve an existing preview file; never compile on read."""
+        return self.presentation_previews.file(reference, name)
 
     def inspect_beamer_styles(self, source: str | Path) -> dict[str, object]:
         """Inspect a local Beamer directory/ZIP without compiling or installing it."""

@@ -16,3 +16,6 @@ tech_documents/web/static/vendor/reveal/
 
 # Per-presentation, local saved build profiles (PS-06)
 .workbench-presentation-configs/
+
+# On-demand locally rendered previews of registered themes (PS-09)
+.workbench-presentation-previews/

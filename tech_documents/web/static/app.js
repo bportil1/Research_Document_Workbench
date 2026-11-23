@@ -3514,6 +3514,11 @@ const presentationStyleDescription = document.getElementById("presentationStyleD
 const presentationStyleResult = document.getElementById("presentationStyleResult");
 const presentationStyleImportStatus = document.getElementById("presentationStyleImportStatus");
 const presentationStyleProfileStatus = document.getElementById("presentationStyleProfileStatus");
+const presentationStylePreviewPanel = document.getElementById("presentationStylePreviewPanel");
+const presentationStylePreviewBtn = document.getElementById("presentationStylePreviewBtn");
+const presentationStylePreviewStatus = document.getElementById("presentationStylePreviewStatus");
+const presentationStylePreviewImages = document.getElementById("presentationStylePreviewImages");
+const presentationStylePreviewPdf = document.getElementById("presentationStylePreviewPdf");
 const presentationStyleCandidate = document.getElementById("presentationStyleCandidate");
 const presentationStyleZip = document.getElementById("presentationStyleZip");
 const presentationStylePath = document.getElementById("presentationStylePath");
@@ -3532,6 +3537,87 @@ function selectedPresentationStyle() {
 function selectedPresentationStyleRef() {
   const style = selectedPresentationStyle();
   return style ? { kind: style.kind, identifier: style.identifier, version: style.version } : null;
+}
+
+function presentationStylePreviewUrl(style) {
+  return `/api/presentation-styles/${encodeURIComponent(style.kind)}/${encodeURIComponent(style.identifier)}/${encodeURIComponent(style.version)}/preview`;
+}
+
+function renderPresentationStylePreviewResult(result) {
+  presentationStylePreviewImages.replaceChildren();
+  presentationStylePreviewPdf.hidden = true;
+  presentationStylePreviewPdf.removeAttribute("href");
+  presentationStylePreviewBtn.disabled = !result.available;
+  if (!result.cached) {
+    presentationStylePreviewStatus.textContent = result.available
+      ? "No cached preview yet. Select Generate local preview to compile the sample slides."
+      : result.reason || "Theme preview is unavailable.";
+    return;
+  }
+  presentationStylePreviewStatus.textContent = result.available
+    ? "Rendered preview of the selected, version-pinned theme."
+    : `Cached preview shown; regeneration unavailable: ${result.reason}`;
+  for (const [index, url] of result.images.entries()) {
+    const figure = document.createElement("figure");
+    const img = document.createElement("img");
+    img.alt = `Theme sample slide ${index + 1}`;
+    img.loading = "lazy";
+    img.src = `${url}?rev=${encodeURIComponent(result.fingerprint)}`;
+    const caption = document.createElement("figcaption");
+    caption.textContent = index === 0 ? "Title slide" : "Content and mathematics";
+    figure.append(img, caption);
+    presentationStylePreviewImages.appendChild(figure);
+  }
+  if (result.pdf_url) {
+    presentationStylePreviewPdf.href = `${result.pdf_url}?rev=${encodeURIComponent(result.fingerprint)}`;
+    presentationStylePreviewPdf.hidden = false;
+  }
+}
+
+async function loadPresentationStylePreview() {
+  const session = presentationStyleSession;
+  if (!session) return;
+  const style = selectedPresentationStyle();
+  const choice = chosenPresentationTarget();
+  const sequence = session.previewSequence = (session.previewSequence || 0) + 1;
+  presentationStylePreviewImages.replaceChildren();
+  presentationStylePreviewPdf.hidden = true;
+  presentationStylePreviewPdf.removeAttribute("href");
+  // Preview selection is independent of export. Only registered Beamer styles
+  // are currently previewable; other providers can be added to the backend.
+  const enabled = choice?.kind === "render" && !!style;
+  presentationStylePreviewPanel.hidden = !enabled;
+  if (!enabled) return;
+  presentationStylePreviewBtn.disabled = true;
+  presentationStylePreviewStatus.textContent = "Checking locally cached theme preview…";
+  try {
+    const result = await api(presentationStylePreviewUrl(style));
+    if (presentationStyleSession !== session || session.previewSequence !== sequence) return;
+    renderPresentationStylePreviewResult(result);
+  } catch (error) {
+    if (presentationStyleSession === session && session.previewSequence === sequence) {
+      presentationStylePreviewStatus.textContent = `Preview unavailable: ${error.message}`;
+    }
+  }
+}
+
+async function generatePresentationStylePreview() {
+  const session = presentationStyleSession;
+  const style = selectedPresentationStyle();
+  if (!session || !style) return;
+  const sequence = session.previewSequence = (session.previewSequence || 0) + 1;
+  presentationStylePreviewBtn.disabled = true;
+  presentationStylePreviewStatus.textContent = "Compiling sample slides with local tools…";
+  try {
+    const result = await api(presentationStylePreviewUrl(style), { method: "POST" });
+    if (presentationStyleSession !== session || session.previewSequence !== sequence) return;
+    renderPresentationStylePreviewResult(result);
+  } catch (error) {
+    if (presentationStyleSession === session && session.previewSequence === sequence) {
+      presentationStylePreviewStatus.textContent = `Preview generation failed: ${error.message}`;
+      presentationStylePreviewBtn.disabled = false;
+    }
+  }
 }
 
 function chosenPresentationTarget() {
@@ -3564,6 +3650,7 @@ function refreshPresentationStyleSelection(desiredRef = null) {
   document.getElementById("presentationStylePickerField").hidden = !styleEnabled;
   presentationStyleSelection.disabled = !styleEnabled;
   updatePresentationStyleDetails();
+  loadPresentationStylePreview();
 }
 
 function updatePresentationStyleDetails() {
@@ -5015,7 +5102,12 @@ document.getElementById("presentationStyleBtn")?.addEventListener("click", () =>
   presentationStyleAction(openPresentationStyleDialog()));
 document.getElementById("presentationStyleCloseBtn")?.addEventListener("click", () => presentationStyleDialog.close());
 presentationStyleRenderer?.addEventListener("change", () => refreshPresentationStyleSelection());
-presentationStyleSelection?.addEventListener("change", updatePresentationStyleDetails);
+presentationStyleSelection?.addEventListener("change", () => {
+  updatePresentationStyleDetails();
+  loadPresentationStylePreview();
+});
+presentationStylePreviewBtn?.addEventListener("click", () =>
+  generatePresentationStylePreview());
 document.getElementById("presentationStyleSaveBtn")?.addEventListener("click", () =>
   presentationStyleAction(saveCurrentPresentationStyleProfile()));
 document.getElementById("presentationStyleClearBtn")?.addEventListener("click", () =>

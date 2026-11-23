@@ -357,6 +357,59 @@ def presentation_styles() -> Response:
     return jsonify({"styles": styles, "renderers": renderers})
 
 
+# PS-09: separate explicit preview compilation from read-only inspection.
+# Local TeX compilation of a theme may execute macros: preview only trusted
+# themes and never compile as a side effect of selecting one in the browser.
+def _presentation_preview_reference(kind: str, identifier: str, version: str) -> StyleReference:
+    return StyleReference(identifier=identifier, version=version, kind=kind)
+
+
+def _presentation_preview_urls(kind: str, identifier: str, version: str, result: dict[str, object]) -> dict[str, object]:
+    if result["cached"]:
+        from flask import url_for
+        def asset(name: str) -> str:
+            return url_for("presentation_style_preview_file", kind=kind,
+                           identifier=identifier, version=version, filename=name)
+        result["images"] = [asset(name) for name in result["pages"]]
+        result["pdf_url"] = asset("preview.pdf")
+    else:
+        result["images"] = []
+        result["pdf_url"] = None
+    return result
+
+
+@app.get("/api/presentation-styles/<kind>/<identifier>/<version>/preview")
+def presentation_style_preview_status(kind: str, identifier: str, version: str) -> Response:
+    try:
+        ref = _presentation_preview_reference(kind, identifier, version)
+        data = engine.presentation_style_preview(ref)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify(_presentation_preview_urls(kind, identifier, version, data))
+
+
+@app.post("/api/presentation-styles/<kind>/<identifier>/<version>/preview")
+def generate_presentation_style_preview(kind: str, identifier: str, version: str) -> Response:
+    try:
+        ref = _presentation_preview_reference(kind, identifier, version)
+        data = engine.presentation_style_preview(ref, generate=True)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    return jsonify(_presentation_preview_urls(kind, identifier, version, data))
+
+
+@app.get("/api/presentation-styles/<kind>/<identifier>/<version>/preview/files/<filename>")
+def presentation_style_preview_file(kind: str, identifier: str, version: str, filename: str) -> Response:
+    try:
+        ref = _presentation_preview_reference(kind, identifier, version)
+        path = engine.presentation_style_preview_file(ref, filename)
+    except (DocumentEngineError, ValueError, OSError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else PresentationError(str(exc)))
+    response = send_file(path, mimetype="application/pdf" if filename.endswith(".pdf") else "image/png")
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 @app.post("/api/presentation-styles/inspect")
 def inspect_presentation_style() -> Response:
     try:
