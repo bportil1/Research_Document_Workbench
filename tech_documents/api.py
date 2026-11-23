@@ -44,8 +44,9 @@ from .latex_tools import parse_latex_log, preflight_latex
 from .notebook_exports import NotebookExportService
 from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
 from .presentations import (
-    PresentationExportRequest, PresentationService, PresentationStyleRegistry, StyleReference, existing_export_renderers,
-    inspect_beamer_source, import_beamer_style,
+    PresentationError, PresentationExportRequest, PresentationService, PresentationStyleRegistry, StyleReference, existing_export_renderers,
+    inspect_beamer_source, import_beamer_style, PresentationBuildProfile,
+    PresentationProfileStore, style_manifest_digest,
 )
 from .paths import (
     ALLOWED_EXTENSIONS,
@@ -83,6 +84,7 @@ class DocumentEngine:
         self.notebooks = NotebookRuntime()
         self.notebook_exports = NotebookExportService()
         self.presentation_styles = PresentationStyleRegistry(self.base_dir / ".workbench-presentation-styles")
+        self.presentation_profiles = PresentationProfileStore(self.base_dir / ".workbench-presentation-configs")
         self.presentations = PresentationService(
             existing_export_renderers(self.notebook_exports, styles=self.presentation_styles), styles=self.presentation_styles,
         )
@@ -550,22 +552,90 @@ class DocumentEngine:
             ),
         }
 
+    def _validate_presentation_profile(
+        self, profile: PresentationBuildProfile, *, source_kind: str,
+    ) -> PresentationBuildProfile:
+        """Check stable adapter contracts without requiring installed build tools."""
+        from dataclasses import replace
+        from .presentations.renderers import PLANNED_RENDERERS
+
+        planned = next((cap for cap in PLANNED_RENDERERS if cap.renderer_id == profile.renderer_id), None)
+        if (planned is None or source_kind not in planned.source_kinds
+                or profile.output_format not in planned.output_formats):
+            raise PresentationError("Unsupported presentation source, renderer, or output format.")
+        if profile.style is None:
+            return profile
+        if profile.style.kind not in planned.style_kinds:
+            raise PresentationError("Renderer does not support the selected presentation style kind.")
+        installed = self.presentation_styles.resolve(profile.style, renderer_id=profile.renderer_id)
+        actual_digest = style_manifest_digest(installed.manifest)
+        if profile.style_manifest_sha256 is not None and profile.style_manifest_sha256 != actual_digest:
+            raise PresentationError("Pinned presentation style manifest changed after the profile was saved.")
+        return replace(profile, style_manifest_sha256=actual_digest)
+
+    def presentation_profile(self, project: str, filename: str) -> dict[str, object] | None:
+        """Read the saved build profile for exactly one presentation source."""
+        source, kind = self._presentation_source(project, filename)
+        profile = self.presentation_profiles.load(self.project_path(project), source)
+        if profile is None:
+            return None
+        return self._validate_presentation_profile(profile, source_kind=kind).as_dict()
+
+    def save_presentation_profile(
+        self, project: str, filename: str, *, renderer_id: str,
+        output_format: str, output_name: str | None = None,
+        style: StyleReference | None = None, options: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Save an explicit, versioned local configuration without changing source."""
+        source, kind = self._presentation_source(project, filename)
+        style_digest = None
+        if style is not None:
+            installed = self.presentation_styles.resolve(style, renderer_id=renderer_id)
+            style_digest = style_manifest_digest(installed.manifest)
+        profile = PresentationBuildProfile(
+            renderer_id=renderer_id, output_format=output_format, style=style,
+            output_name=output_name, options={} if options is None else options,
+            style_manifest_sha256=style_digest,
+        )
+        profile = self._validate_presentation_profile(profile, source_kind=kind)
+        self.presentation_profiles.save(self.project_path(project), source, profile)
+        return profile.as_dict()
+
+    def delete_presentation_profile(self, project: str, filename: str) -> bool:
+        """Clear only this source's saved profile; leave installed styles untouched."""
+        source, _ = self._presentation_source(project, filename)
+        return self.presentation_profiles.delete(self.project_path(project), source)
+
     def export_presentation(
         self,
         project: str,
         filename: str,
         *,
-        renderer_id: str,
-        output_format: str,
+        renderer_id: str | None = None,
+        output_format: str | None = None,
         output_name: str | None = None,
         style: StyleReference | None = None,
+        use_saved_profile: bool = False,
     ) -> dict[str, Any]:
-        """Export Markdown or notebooks, optionally using a pinned Beamer style.
+        """Export with explicit choices or deliberately opt into a saved profile.
 
-        Style selection is explicit per export; persisted choices arrive in PS-06.
+        Existing explicit exports never inherit configuration from another
+        presentation. Saved profiles are loaded and revalidated per invocation.
         """
         source, source_kind = self._presentation_source(project, filename)
         root = self.project_path(project).resolve()
+        if use_saved_profile:
+            if renderer_id is not None or output_format is not None or style is not None:
+                raise PresentationError("A saved presentation profile cannot be mixed with explicit renderer or style choices.")
+            profile = self.presentation_profiles.load(root, source)
+            if profile is None:
+                raise PresentationError("No saved presentation profile exists for this source.")
+            profile = self._validate_presentation_profile(profile, source_kind=source_kind)
+            renderer_id, output_format, style = profile.renderer_id, profile.output_format, profile.style
+            if output_name is None:
+                output_name = profile.output_name
+        elif renderer_id is None or output_format is None:
+            raise PresentationError("Explicit presentation exports require a renderer and output format.")
         request = PresentationExportRequest(
             source_path=source,
             project_root=root,
@@ -588,6 +658,8 @@ class DocumentEngine:
         }
         if style is not None:
             response["style"] = {"identifier": style.identifier, "version": style.version, "kind": style.kind}
+        if use_saved_profile:
+            response["saved_profile_applied"] = True
         return response
 
     def notebook_capabilities(self) -> dict[str, Any]:

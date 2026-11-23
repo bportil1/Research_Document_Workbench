@@ -318,9 +318,22 @@ def presentation_export_capabilities(project: str, filename: str) -> Response:
     return jsonify(result)
 
 
-@app.post("/api/presentations/<project>/<path:filename>/exports")
-def export_presentation(project: str, filename: str) -> Response:
-    payload = request.get_json(silent=True) or {}
+@app.get("/api/presentations/<project>/<path:filename>/profile")
+def get_presentation_profile(project: str, filename: str) -> Response:
+    try:
+        profile = engine.presentation_profile(project, filename)
+    except (DocumentEngineError, ValueError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else DocumentEngineError(str(exc)))
+    return jsonify({"profile": profile})
+
+
+@app.put("/api/presentations/<project>/<path:filename>/profile")
+def put_presentation_profile(project: str, filename: str) -> Response:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _json_engine_error(PresentationError("Presentation profile request must be a JSON object."))
+    if set(payload) - {"renderer", "format", "output_name", "style", "options"}:
+        return _json_engine_error(PresentationError("Unsupported presentation profile fields."))
     try:
         style_data = payload.get("style")
         style = None
@@ -328,13 +341,50 @@ def export_presentation(project: str, filename: str) -> Response:
             if not isinstance(style_data, dict) or set(style_data) != {"identifier", "version", "kind"}:
                 raise PresentationError("Style requires identifier, version, and kind.")
             style = StyleReference(**style_data)
+        options = payload.get("options", {})
+        profile = engine.save_presentation_profile(
+            project, filename,
+            renderer_id=payload.get("renderer", ""),
+            output_format=payload.get("format", ""),
+            output_name=payload.get("output_name"),
+            style=style, options=options,
+        )
+    except (DocumentEngineError, ValueError, TypeError) as exc:
+        return _json_engine_error(exc if isinstance(exc, DocumentEngineError) else DocumentEngineError(str(exc)))
+    return jsonify({"ok": True, "profile": profile})
+
+
+@app.delete("/api/presentations/<project>/<path:filename>/profile")
+def delete_presentation_profile(project: str, filename: str) -> Response:
+    try:
+        deleted = engine.delete_presentation_profile(project, filename)
+    except DocumentEngineError as exc:
+        return _json_engine_error(exc)
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.post("/api/presentations/<project>/<path:filename>/exports")
+def export_presentation(project: str, filename: str) -> Response:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _json_engine_error(PresentationError("Presentation export request must be a JSON object."))
+    try:
+        style_data = payload.get("style")
+        style = None
+        if style_data is not None:
+            if not isinstance(style_data, dict) or set(style_data) != {"identifier", "version", "kind"}:
+                raise PresentationError("Style requires identifier, version, and kind.")
+            style = StyleReference(**style_data)
+        use_saved_profile = payload.get("use_saved_profile", False)
+        if type(use_saved_profile) is not bool:
+            raise PresentationError("use_saved_profile must be a boolean.")
         result = engine.export_presentation(
             project,
             filename,
-            renderer_id=str(payload.get("renderer", "")),
-            output_format=str(payload.get("format", "")),
+            renderer_id=None if use_saved_profile and "renderer" not in payload else str(payload.get("renderer", "")),
+            output_format=None if use_saved_profile and "format" not in payload else str(payload.get("format", "")),
             output_name=str(payload.get("output_name", "") or "") or None,
-            style=style,
+            style=style, use_saved_profile=use_saved_profile,
         )
     except (DocumentEngineError, ValueError) as exc:
         if isinstance(exc, DocumentEngineError):

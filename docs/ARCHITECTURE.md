@@ -241,3 +241,56 @@ Quarto is not installed in the sprint's test environment. Separately, the
 original `csci447.zip` theme was imported and compiled successfully with
 `pdflatex -no-shell-escape` using a newly written two-slide deck and the staged
 assets. This is a TeX integration check, not a complete Quarto integration test.
+
+## PS-06 — Per-presentation persistent build profiles
+
+`tech_documents.presentations.profiles` persists an explicit build profile for
+**each source file within its canonical project root**. Profile files are saved
+outside source projects under `.workbench-presentation-configs/profiles/` at the
+Workbench host base directory (ignored by Git). The profile filename is a
+SHA-256 identity of the canonical project root and relative presentation source;
+profiles for different projects or presentations cannot share an identifier.
+Linked projects are therefore supported without modifying their repositories.
+Profiles are loaded from disk on every operation, rather than cached in the
+`DocumentEngine` instance.
+
+Profile schema 1 records the renderer ID, output format, optional output basename,
+optional exact `StyleReference` (kind/identifier/version), and the SHA-256 digest
+of the installed **style manifest** (which contains hashes for all its assets).
+A saved reference never floats to a newly installed style version. Saving and
+reading verify style compatibility and installed asset integrity. A missing,
+corrupted, or changed pinned style yields an explicit error instead of falling
+back to a default style. Unknown profile schema versions are rejected. Profiles
+are written atomically via same-directory temporary files; storage rejects
+symlinks in profile paths. Files and folders are local and private to the host.
+
+`DocumentEngine` exposes:
+
+- `save_presentation_profile(project, filename, renderer_id=..., output_format=...,
+  output_name=None, style=None)` — validate and save for only that source.
+- `presentation_profile(project, filename)` — read and verify, or `None` if absent.
+- `delete_presentation_profile(project, filename)` — remove one profile.
+- `export_presentation(project, filename, use_saved_profile=True)` — explicitly
+  use the stored renderer, format, output basename, and pinned style.
+
+The API exposes `GET`, `PUT`, and `DELETE` on
+`/api/presentations/<project>/<path:filename>/profile`. PUT accepts the
+renderer/format keys used by the export API and optional `output_name` and
+pinned `style` fields. A presentation export POST can now use:
+
+```json
+{"use_saved_profile": true}
+```
+
+This opt-in is deliberate: existing direct exports remain independent from
+saved profiles, and a saved-profile export cannot simultaneously supply a
+renderer, format, or style override. A filename-only `output_name` override is
+allowed on that single export without mutating the stored profile. Custom
+renderer options remain unsupported by existing PS-05 adapters, so schema 1
+rejects nonempty `options` instead of saving settings which a build would ignore.
+The PS-07 UI will expose profile editing and selection. Existing presentation
+output names/directories are unchanged; same-named sources in one project may
+still need distinct output names to prevent export file collisions.
+
+No network or external service is involved. This metadata persistence does not
+change the TeX trust model described in PS-05.

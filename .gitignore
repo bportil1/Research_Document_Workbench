@@ -13,3 +13,6 @@ tech_documents/web/static/vendor/reveal/
 
 # Locally installed, versioned presentation styles (PS-03)
 .workbench-presentation-styles/
+
+# Per-presentation, local saved build profiles (PS-06)
+.workbench-presentation-configs/
