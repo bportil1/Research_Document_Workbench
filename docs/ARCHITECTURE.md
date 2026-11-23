@@ -47,3 +47,31 @@ The live presentation assets are vendored into the Workbench and served locally.
 The standalone interface remains under `tech_documents/web/`. It selects the normal text-document surface or the notebook surface according to the opened file type. Notebook code cells use a locally vendored Ace editor, while Markdown cells alternate between source editing and rendered form.
 
 The root `app.py` remains a backward-compatible launcher; `run.py` is the preferred launcher.
+
+## Shared presentation service — PS-01 foundation
+
+`tech_documents.presentations` introduces a browser-independent boundary for
+future presentation rendering. `DocumentEngine.presentations` provides the
+`PresentationService`, and `DocumentEngine.presentation_renderer_capabilities()`
+exposes the renderer catalog. These are additive: existing notebook exports,
+Markdown presentation conversion, and live Reveal.js playback are **unchanged**.
+
+- `PresentationExportRequest` records the original source path/kind, project,
+  renderer, output format, optional pinned style reference and build options.
+  Sources remain in their native Markdown, `.ipynb`, or LaTeX form; no lossy
+  universal slide AST is imposed.
+- `RendererCapabilities` describes accepted source/output/style combinations
+  and actual availability. Unimplemented Beamer, Reveal.js and PowerPoint
+  shared-service adapters are intentionally reported as *unavailable* even
+  when an existing legacy notebook export can produce that format.
+- `PresentationRenderer` is a protocol for future local adapters and
+  `PresentationService` handles registration, compatibility checks, dispatch,
+  and project-local input/output containment.
+- `StyleReference` identifies a pinned style and type, but does **not** resolve
+  theme directories or install packages yet. That is PS-03/PS-04.
+
+The shared service does not render anything until a functioning adapter is
+registered. PS-02 will connect existing exporters to the shared entry point;
+PS-03 will add a persistent style registry; PS-04/PS-05 will import and render
+Beamer themes (including the `csci447` acceptance fixture). No new build
+commands, third-party dependencies or network access are introduced by PS-01.

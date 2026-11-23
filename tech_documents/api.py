@@ -43,6 +43,7 @@ from .notebooks import NotebookRuntime, notebook_dependencies
 from .latex_tools import parse_latex_log, preflight_latex
 from .notebook_exports import NotebookExportService
 from .presentation_transfer import notebook_to_presentation_markdown, presentation_markdown_to_notebook
+from .presentations import PresentationService
 from .paths import (
     ALLOWED_EXTENSIONS,
     NOTEBOOK_EXTENSIONS,
@@ -78,6 +79,7 @@ class DocumentEngine:
         self.project_registry_path = self.base_dir / ".workbench-projects.json"
         self.notebooks = NotebookRuntime()
         self.notebook_exports = NotebookExportService()
+        self.presentations = PresentationService()  # PS-01: adapters are added in later sprints
         self.ensure_directories()
 
     # ------------------------------------------------------------------
@@ -491,6 +493,14 @@ class DocumentEngine:
     def shutdown_notebook_kernel(self, project: str, filename: str) -> bool:
         file_path = self.editable_file_path(project, filename)
         return self.notebooks.shutdown(file_path)
+
+    def presentation_renderer_capabilities(self) -> list[dict[str, object]]:
+        """Describe shared presentation targets without changing legacy exports.
+
+        Currently these targets are unavailable until the corresponding adapter
+        is registered. Use notebook_export_capabilities for existing exports.
+        """
+        return self.presentations.capabilities()
 
     def notebook_capabilities(self) -> dict[str, Any]:
         return {

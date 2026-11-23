@@ -1,4 +1,12 @@
 from .api import DocumentEngine, SavedDiagramAsset
+from .presentations import (
+    PresentationError,
+    PresentationExportRequest,
+    PresentationExportResult,
+    PresentationService,
+    RendererCapabilities,
+    StyleReference,
+)
 from .errors import (
     DocumentEngineError,
     InvalidPathError,
@@ -14,5 +22,11 @@ __all__ = [
     "ItemConflictError",
     "ItemNotFoundError",
     "SavedDiagramAsset",
+    "PresentationError",
+    "PresentationExportRequest",
+    "PresentationExportResult",
+    "PresentationService",
+    "RendererCapabilities",
+    "StyleReference",
     "UnsupportedFileTypeError",
 ]
