@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from contextlib import contextmanager
 import tempfile
 from typing import Any
@@ -22,7 +23,14 @@ from ..errors import DocumentEngineError
 from ..paths import safe_name
 
 
-engine = DocumentEngine()
+# PAH process entry point sets these before import. Standalone launches retain
+# the original repository-root defaults without importing or depending on PAH.
+_process_data_root = os.environ.get("RDW_PROCESS_DATA_ROOT")
+_process_builds_root = os.environ.get("RDW_PROCESS_BUILDS_ROOT")
+engine = DocumentEngine(
+    _process_data_root or None,
+    builds_dir=_process_builds_root or None,
+)
 
 app = Flask(
     __name__,

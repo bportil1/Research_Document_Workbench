@@ -19,3 +19,25 @@ tech_documents/web/static/vendor/reveal/
 
 # On-demand locally rendered previews of registered themes (PS-09)
 .workbench-presentation-previews/
+
+# Instance runtime and generated analysis outputs (host/module independent).
+/analysis/
+/.pah/
+/runtime/
+/cache/
+/logs/
+/exports/
+/scratch/
+/tmp/
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite-wal
+*.sqlite-shm
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local linked-project catalog and its cross-process lock (never commit paths).
+/.workbench-projects.json
+/.workbench-projects.lock
+/.workbench-projects-*.tmp

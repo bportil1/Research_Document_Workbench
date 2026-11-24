@@ -5,6 +5,8 @@ import json
 import os
 import binascii
 import hashlib
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
@@ -78,12 +80,12 @@ class DocumentEngine:
     application and the future unified Project Assistant can both call this surface.
     """
 
-    def __init__(self, base_dir: str | Path | None = None):
+    def __init__(self, base_dir: str | Path | None = None, *, builds_dir: str | Path | None = None):
         if base_dir is None:
             base_dir = Path(__file__).resolve().parent.parent
         self.base_dir = Path(base_dir).resolve()
         self.documents_dir = self.base_dir / "documents"
-        self.builds_dir = self.base_dir / "builds"
+        self.builds_dir = Path(builds_dir).expanduser().resolve() if builds_dir is not None else self.base_dir / "builds"
         self.project_registry_path = self.base_dir / ".workbench-projects.json"
         self.notebooks = NotebookRuntime()
         self.notebook_exports = NotebookExportService()
@@ -106,21 +108,69 @@ class DocumentEngine:
         self.documents_dir.mkdir(parents=True, exist_ok=True)
         self.builds_dir.mkdir(parents=True, exist_ok=True)
 
+    @contextmanager
+    def _project_registry_write_lock(self):
+        """Synchronize linked-project registry edits across Workbench processes.
+
+        The lock file itself remains stable while the registry JSON is atomically
+        replaced.  POSIX flock covers PAH's Linux environment; Windows uses an
+        equivalent one-byte msvcrt lock.
+        """
+        lock_path = self.base_dir / ".workbench-projects.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as handle:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                if not handle.read(1):
+                    handle.write(b"0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
     def _load_project_registry(self) -> dict[str, Any]:
         if not self.project_registry_path.exists():
             return {"version": 1, "projects": {}}
         try:
             raw = json.loads(self.project_registry_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"version": 1, "projects": {}}
-        projects = raw.get("projects") if isinstance(raw, dict) else None
-        return {"version": 1, "projects": projects if isinstance(projects, dict) else {}}
+        except (OSError, ValueError) as exc:
+            raise DocumentEngineError("Workbench project catalog is unreadable; refusing to replace it.", status_code=409) from exc
+        if not isinstance(raw, dict) or not isinstance(raw.get("projects"), dict):
+            raise DocumentEngineError("Workbench project catalog has an invalid structure.", status_code=409)
+        return {"version": 1, "projects": raw["projects"]}
 
     def _save_project_registry(self, registry: dict[str, Any]) -> None:
+        """Atomically publish a catalog; callers hold the registry write lock."""
         self.project_registry_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.project_registry_path.with_suffix(".tmp")
-        temp.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temp.replace(self.project_registry_path)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=self.project_registry_path.parent,
+                prefix=".workbench-projects-", suffix=".tmp",
+                encoding="utf-8", delete=False,
+            ) as handle:
+                temporary_path = Path(handle.name)
+                handle.write(json.dumps(registry, indent=2, sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self.project_registry_path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     def _project_record(self, project: str) -> dict[str, Any]:
         name = safe_name(project, "default")
@@ -198,14 +248,15 @@ class DocumentEngine:
             if main_path != documents_path and documents_path not in main_path.parents:
                 raise InvalidPathError("Main LaTeX file must be inside the Documents Root.")
 
-        registry = self._load_project_registry()
-        record = registry["projects"].setdefault(name, {})
-        if not isinstance(record, dict):
-            record = {}
-            registry["projects"][name] = record
-        record["documents_root"] = normalized_root
-        record["main_tex"] = normalized_main
-        self._save_project_registry(registry)
+        with self._project_registry_write_lock():
+            registry = self._load_project_registry()
+            record = registry["projects"].setdefault(name, {})
+            if not isinstance(record, dict):
+                record = {}
+                registry["projects"][name] = record
+            record["documents_root"] = normalized_root
+            record["main_tex"] = normalized_main
+            self._save_project_registry(registry)
         return self.project_context(name)
 
     def link_project(self, path: str | Path, *, name: str | None = None) -> str:
@@ -213,23 +264,24 @@ class DocumentEngine:
         if not target.exists() or not target.is_dir():
             raise ItemNotFoundError("The folder to attach does not exist.")
         base_name = safe_name(name or target.name, "linked_project")
-        registry = self._load_project_registry()
-        candidate = base_name
-        suffix = 2
-        while (self.documents_dir / candidate).exists() or candidate in registry["projects"]:
-            existing = registry["projects"].get(candidate)
-            if isinstance(existing, dict) and existing.get("linked") and Path(str(existing.get("path", ""))).expanduser().resolve() == target:
-                return candidate
-            candidate = f"{base_name}_{suffix}"
-            suffix += 1
-        registry["projects"][candidate] = {
-            "linked": True,
-            "path": str(target),
-            "documents_root": "",
-            "main_tex": "",
-        }
-        self._save_project_registry(registry)
-        return candidate
+        with self._project_registry_write_lock():
+            registry = self._load_project_registry()
+            candidate = base_name
+            suffix = 2
+            while (self.documents_dir / candidate).exists() or candidate in registry["projects"]:
+                existing = registry["projects"].get(candidate)
+                if isinstance(existing, dict) and existing.get("linked") and Path(str(existing.get("path", ""))).expanduser().resolve() == target:
+                    return candidate
+                candidate = f"{base_name}_{suffix}"
+                suffix += 1
+            registry["projects"][candidate] = {
+                "linked": True,
+                "path": str(target),
+                "documents_root": "",
+                "main_tex": "",
+            }
+            self._save_project_registry(registry)
+            return candidate
 
     def build_file_path(self, build_id: str, filename: str) -> Path:
         safe_build_id = safe_name(build_id)
@@ -387,20 +439,21 @@ class DocumentEngine:
 
     def delete_project(self, project: str) -> None:
         name = safe_name(project, "default")
-        project_path = self.project_path(name)
-        if not project_path.exists():
-            raise ItemNotFoundError("Project does not exist.")
-        self.notebooks.shutdown_under(project_path)
-        registry = self._load_project_registry()
-        record = registry["projects"].get(name, {})
-        if isinstance(record, dict) and record.get("linked"):
-            registry["projects"].pop(name, None)
-            self._save_project_registry(registry)
-            return
-        shutil.rmtree(project_path)
-        if name in registry["projects"]:
-            registry["projects"].pop(name, None)
-            self._save_project_registry(registry)
+        with self._project_registry_write_lock():
+            project_path = self.project_path(name)
+            if not project_path.exists():
+                raise ItemNotFoundError("Project does not exist.")
+            registry = self._load_project_registry()
+            record = registry["projects"].get(name, {})
+            if isinstance(record, dict) and record.get("linked"):
+                registry["projects"].pop(name, None)
+                self._save_project_registry(registry)
+                return
+            self.notebooks.shutdown_under(project_path)
+            shutil.rmtree(project_path)
+            if name in registry["projects"]:
+                registry["projects"].pop(name, None)
+                self._save_project_registry(registry)
 
     # ------------------------------------------------------------------
     # Editable text files and directories

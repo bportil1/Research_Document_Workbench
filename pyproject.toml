@@ -24,6 +24,9 @@ web = [
 ]
 dev = ["pytest>=8"]
 
+[project.entry-points."pah.runtimes"]
+tech_documents = "tech_documents.pah_integration:WorkbenchRuntimeAdapter"
+
 [tool.setuptools.packages.find]
 include = ["tech_documents*"]
 
